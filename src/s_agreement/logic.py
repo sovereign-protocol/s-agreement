@@ -111,6 +111,40 @@ class AgreementLogic:
         data["text"] = normalized
         return self.session.modify(clause.uuid, data, clause.weights)
 
+    def rename_agreement(self, agreement_uuid: str, title: str) -> SessionResult:
+        return self._retitle(agreement_uuid, "agreement", "title", title)
+
+    def rename_section(self, section_uuid: str, title: str) -> SessionResult:
+        return self._retitle(section_uuid, "agreement_section", "title", title)
+
+    def _retitle(self, node_uuid: str, node_type: str, field: str,
+                 value: str) -> SessionResult:
+        node = self._node(node_uuid, node_type)
+        if not node:
+            return SessionResult("error", reason=f"{node_type} not found")
+        normalized = str(value or "").strip()
+        if not normalized:
+            return SessionResult("error", reason=f"{field} is required")
+        data = dict(node.data)
+        data[field] = normalized
+        return self.session.modify(node.uuid, data, node.weights)
+
+    def delete_section(self, section_uuid: str) -> SessionResult:
+        # Deleting a section takes its clauses with it. That is safe here
+        # only because the request is local and explicit; adopting a peer's
+        # section deletion is a separate decision this application still
+        # leaves to the generic reconciliation path.
+        section = self._node(section_uuid, "agreement_section")
+        if not section:
+            return SessionResult("error", reason="section not found")
+        return self.session.delete(section.uuid)
+
+    def delete_clause(self, clause_uuid: str) -> SessionResult:
+        clause = self._node(clause_uuid, "agreement_clause")
+        if not clause:
+            return SessionResult("error", reason="clause not found")
+        return self.session.delete(clause.uuid)
+
     def accept_agreement_invitation(self, subtree: ProtocolNode) -> SessionResult:
         if subtree.data.get("type") != "agreement":
             return SessionResult("error", reason="invited topic is not an agreement")

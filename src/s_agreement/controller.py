@@ -42,6 +42,26 @@ def build_routes(logic, runtime, config: dict) -> list[Route]:
             data["clause_uuid"], data.get("text", ""),
         ))
 
+    async def api_rename_agreement(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.rename_agreement(
+            data["agreement_uuid"], data.get("title", ""),
+        ))
+
+    async def api_rename_section(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.rename_section(
+            data["section_uuid"], data.get("title", ""),
+        ))
+
+    async def api_delete_section(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.delete_section(data["section_uuid"]))
+
+    async def api_delete_clause(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.delete_clause(data["clause_uuid"]))
+
     async def api_adopt(request: Request):
         data = await request.json()
         return await _json_result(runtime, logic.adopt_peer_changes(
@@ -52,9 +72,13 @@ def build_routes(logic, runtime, config: dict) -> list[Route]:
         Route("/api/agreement/document", api_document),
         Route("/api/agreement/agreements/create", api_create_agreement, methods=["POST"]),
         Route("/api/agreement/agreements/select", api_select_agreement, methods=["POST"]),
+        Route("/api/agreement/agreements/rename", api_rename_agreement, methods=["POST"]),
         Route("/api/agreement/sections/create", api_create_section, methods=["POST"]),
+        Route("/api/agreement/sections/rename", api_rename_section, methods=["POST"]),
+        Route("/api/agreement/sections/delete", api_delete_section, methods=["POST"]),
         Route("/api/agreement/clauses/create", api_create_clause, methods=["POST"]),
         Route("/api/agreement/clauses/update", api_update_clause, methods=["POST"]),
+        Route("/api/agreement/clauses/delete", api_delete_clause, methods=["POST"]),
         Route("/api/agreement/adopt", api_adopt, methods=["POST"]),
     ]
 

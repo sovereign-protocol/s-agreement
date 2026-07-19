@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>S-Agreement</title>
+  <link rel="stylesheet" href="/assets/shared.css">
+  <link rel="stylesheet" href="/apps/agreement/agreement.css">
+</head>
+<body>
+  <header>
+    <h1>S-Agreement</h1>
+    <span id="connection">Local</span>
+  </header>
+  <main>
+    <div class="toolbar">
+      <select id="agreements" aria-label="Agreement"></select>
+      <button id="new-agreement">New agreement</button>
+      <button id="new-section">Add section</button>
+    </div>
+    <p id="empty">Create or accept an agreement to begin.</p>
+    <article id="document"></article>
+  </main>
+  <script>
+    const api = async (path, body) => {
+      const response = await fetch(path, body ? {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body)
+      } : {});
+      const value = await response.json();
+      if (!response.ok) throw new Error(value.reason || 'Request failed');
+      return value;
+    };
+    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    })[character]);
+    let current = null;
+    const nodeStatus = (payload, uuid) => payload.transition_by_node[uuid]?.type;
+    const render = (payload) => {
+      current = payload.agreement;
+      const select = document.querySelector('#agreements');
+      select.innerHTML = payload.agreements.map(item =>
+        `<option value="${escapeHtml(item.uuid)}" ${item.uuid === current?.uuid ? 'selected' : ''}>${escapeHtml(item.data.title)}</option>`
+      ).join('');
+      document.querySelector('#connection').textContent = payload.network?.connected ? 'Connected' : 'Local';
+      document.querySelector('#empty').hidden = Boolean(current);
+      document.querySelector('#new-section').disabled = !current;
+      document.querySelector('#document').innerHTML = current ? `
+        <h2>${escapeHtml(current.data.title)}</h2>
+        ${current.children.filter(node => !node.deleted).map(section => `
+          <section data-status="${escapeHtml(nodeStatus(payload, section.uuid) || 'in_agreement')}">
+            <h3>${escapeHtml(section.data.title)}</h3>
+            ${section.children.filter(node => !node.deleted).map(clause =>
+              `<p data-status="${escapeHtml(nodeStatus(payload, clause.uuid) || 'in_agreement')}">${escapeHtml(clause.data.text)}</p>`
+            ).join('')}
+            <button class="add-clause" data-section="${escapeHtml(section.uuid)}">Add clause</button>
+          </section>`).join('')}` : '';
+      document.querySelectorAll('.add-clause').forEach(button => button.onclick = async () => {
+        const text = prompt('Clause text');
+        if (text) await api('/api/agreement/clauses/create', {section_uuid: button.dataset.section, text});
+        await load();
+      });
+    };
+    const load = async () => render(await api('/api/agreement/document'));
+    document.querySelector('#new-agreement').onclick = async () => {
+      const title = prompt('Agreement title');
+      if (title) await api('/api/agreement/agreements/create', {title});
+      await load();
+    };
+    document.querySelector('#new-section').onclick = async () => {
+      const title = prompt('Section title');
+      if (title && current) await api('/api/agreement/sections/create', {agreement_uuid: current.uuid, title});
+      await load();
+    };
+    document.querySelector('#agreements').onchange = async event => {
+      await api('/api/agreement/agreements/select', {agreement_uuid: event.target.value});
+      await load();
+    };
+    load();
+    setInterval(load, 3000);
+  </script>
+</body>
+</html>

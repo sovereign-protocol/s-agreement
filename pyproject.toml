@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "s-agreement"
+version = "0.1.0a1"
+description = "S-Agreement conformance application for Sovereign Core"
+requires-python = ">=3.10"
+dependencies = ["sovereign-core>=0.1.0,<0.2"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["s_agreement*"]
+
+[tool.setuptools.package-data]
+"s_agreement.assets" = ["*.css", "*.html", "*.js"]

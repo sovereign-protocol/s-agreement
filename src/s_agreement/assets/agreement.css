@@ -3,10 +3,17 @@ body { margin: 0; font: 15px system-ui, sans-serif; background: #111827; color: 
 header, main { max-width: 850px; margin: auto; padding: 18px 24px; }
 header { display: flex; align-items: center; justify-content: space-between; }
 .toolbar { display: flex; gap: 8px; margin-bottom: 24px; }
-.sharing { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 24px; }
-.sharing input { flex: 1 1 220px; padding: 8px 11px; border-radius: 6px; border: 1px solid #4b5563; }
-.sharing label { color: #9ca3af; font-size: 13px; }
-#sharing-note { flex-basis: 100%; color: #9ca3af; font-size: 12px; min-height: 1em; }
+.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.clause { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.clause p { flex: 1 1 auto; margin: 6px 0; }
+.editable { border-radius: 4px; padding: 2px 4px; margin-left: -4px; cursor: text; }
+.editable:hover { background: rgba(17, 24, 39, 0.06); }
+.editable:focus { outline: 2px solid #2563eb; outline-offset: 1px; background: #fff; }
+button.subtle { background: none; border: none; color: #9a3412; font-size: 12px; cursor: pointer; opacity: 0; }
+.section-head:hover button.subtle, .clause:hover button.subtle,
+button.subtle:focus { opacity: 1; }
+.composer { display: flex; gap: 6px; margin: 10px 0 4px; }
+.composer input { flex: 1 1 auto; padding: 6px 9px; border-radius: 6px; border: 1px solid #d1d5db; }
 button, select { padding: 8px 11px; border-radius: 6px; border: 1px solid #4b5563; }
 article { background: #f9fafb; color: #111827; padding: 32px 48px; border-radius: 8px; }
 section { border-top: 1px solid #d1d5db; padding: 12px 0; }

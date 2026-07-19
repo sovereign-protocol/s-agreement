@@ -8,9 +8,9 @@
   <link rel="stylesheet" href="/apps/agreement/styles.css">
 </head>
 <body>
+  <div id="toast" class="toast"></div>
   <header>
-    <h1>S-Agreement</h1>
-    <span id="connection">Local</span>
+    <div id="shell"></div>
   </header>
   <main>
     <div class="toolbar">
@@ -18,17 +18,22 @@
       <button id="new-agreement">New agreement</button>
       <button id="new-section">Add section</button>
     </div>
-    <div class="sharing" id="sharing" hidden>
-      <label for="target">Relay target</label>
-      <select id="target"></select>
-      <button id="copy-token">Copy share token</button>
-      <input id="token" placeholder="Paste a share token…" aria-label="Share token">
-      <button id="connect">Connect</button>
-      <span id="sharing-note"></span>
-    </div>
     <p id="empty">Create or accept an agreement to begin.</p>
     <article id="document"></article>
   </main>
+  <!-- shared.js binds the confirm dialog's buttons as it loads, so the
+       dialog markup has to exist before that script runs. -->
+  <dialog id="confirmModal">
+    <form method="dialog">
+      <h2 id="confirmModalTitle"></h2>
+      <p id="confirmModalMessage"></p>
+      <menu>
+        <button type="button" id="confirmModalCancelBtn">Cancel</button>
+        <button type="button" id="confirmModalConfirmBtn" class="danger">Delete</button>
+      </menu>
+    </form>
+  </dialog>
+  <script src="/shared.js"></script>
   <script>
     const api = async (path, body) => {
       const response = await fetch(path, body ? {
@@ -39,133 +44,196 @@
       if (!response.ok) throw new Error(value.reason || 'Request failed');
       return value;
     };
-    const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, character => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    })[character]);
     let current = null;
+    let payloadState = {};
     const nodeStatus = (payload, uuid) => payload.transition_by_node[uuid]?.type;
+
+    // Editing happens in place. An element becomes contenteditable on click,
+    // commits on blur or Enter, and reverts on Escape, so there is no modal
+    // between a reader and the text they are reading.
+    const editable = (element, original, commit) => {
+      element.classList.add('editable');
+      element.tabIndex = 0;
+      const begin = () => {
+        if (element.isContentEditable) return;
+        element.contentEditable = 'true';
+        element.focus();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const selection = getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      };
+      element.onclick = begin;
+      element.onkeydown = (event) => {
+        if (event.key === 'Enter') { event.preventDefault(); element.blur(); }
+        if (event.key === 'Escape') {
+          element.textContent = original;
+          element.contentEditable = 'false';
+          element.blur();
+        }
+        if (!element.isContentEditable && (event.key === 'Enter' || event.key === ' ')) {
+          event.preventDefault();
+          begin();
+        }
+      };
+      element.onblur = async () => {
+        element.contentEditable = 'false';
+        const value = element.textContent.trim();
+        if (!value || value === original) { element.textContent = original; return; }
+        try {
+          await commit(value);
+          await load();
+        } catch (error) {
+          element.textContent = original;
+          showToast(error.message, true);
+        }
+      };
+      return element;
+    };
+
+    // A one-line composer replaces prompt(): it stays in the document flow,
+    // so adding a clause reads as writing one.
+    const composer = (label, submit) => {
+      const row = document.createElement('div');
+      row.className = 'composer';
+      const input = document.createElement('input');
+      input.placeholder = label;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Add';
+      const send = async () => {
+        const value = input.value.trim();
+        if (!value) return;
+        input.value = '';
+        try { await submit(value); await load(); }
+        catch (error) { showToast(error.message, true); }
+      };
+      input.onkeydown = (event) => { if (event.key === 'Enter') send(); };
+      button.onclick = send;
+      row.append(input, button);
+      return row;
+    };
+
     const render = (payload) => {
+      payloadState = payload;
       current = payload.agreement;
       const select = document.querySelector('#agreements');
-      select.innerHTML = payload.agreements.map(item =>
-        `<option value="${escapeHtml(item.uuid)}" ${item.uuid === current?.uuid ? 'selected' : ''}>${escapeHtml(item.data.title)}</option>`
-      ).join('');
-      document.querySelector('#connection').textContent = payload.network?.connected ? 'Connected' : 'Local';
-      document.querySelector('#empty').hidden = Boolean(current);
-      document.querySelector('#new-section').disabled = !current;
-      document.querySelector('#document').innerHTML = current ? `
-        <h2>${escapeHtml(current.data.title)}</h2>
-        ${current.children.filter(node => !node.deleted).map(section => `
-          <section data-status="${escapeHtml(nodeStatus(payload, section.uuid) || 'in_agreement')}">
-            <h3>${escapeHtml(section.data.title)}</h3>
-            ${section.children.filter(node => !node.deleted).map(clause =>
-              `<p data-status="${escapeHtml(nodeStatus(payload, clause.uuid) || 'in_agreement')}">${escapeHtml(clause.data.text)}</p>`
-            ).join('')}
-            <button class="add-clause" data-section="${escapeHtml(section.uuid)}">Add clause</button>
-          </section>`).join('')}` : '';
-      document.querySelectorAll('.add-clause').forEach(button => button.onclick = async () => {
-        const text = prompt('Clause text');
-        if (text) await api('/api/agreement/clauses/create', {section_uuid: button.dataset.section, text});
-        await load();
-      });
-      renderSharing(payload);
-    };
-    // The whole page re-renders every 3s. Rebuilding the target list under a
-    // user who is mid-selection would fight them, so leave the control alone
-    // while it has focus and only replace options that actually differ.
-    // A transient message must outlive the next poll, or feedback vanishes
-    // before it can be read. The idle hint only reappears once it expires.
-    let noteHoldUntil = 0;
-    const renderSharing = (payload) => {
-      const sharing = document.querySelector('#sharing');
-      sharing.hidden = !current;
-      if (!current) return;
-      const select = document.querySelector('#target');
-      if (document.activeElement === select) return;
-      const wanted = [['', 'Not assigned'], ...(payload.channel_targets || [])
-        .map(target => [target.id, target.name])];
+      const wanted = payload.agreements.map(item => [item.uuid, item.data.title]);
       const shown = [...select.options].map(option => [option.value, option.textContent]);
       const same = shown.length === wanted.length
-        && wanted.every(([value, label], index) =>
-          shown[index][0] === value && shown[index][1] === label);
-      if (!same) {
-        select.replaceChildren(...wanted.map(([value, label]) => {
+        && wanted.every((pair, index) => shown[index][0] === pair[0] && shown[index][1] === pair[1]);
+      if (!same && document.activeElement !== select) {
+        select.replaceChildren(...wanted.map(pair => {
           const option = document.createElement('option');
-          option.value = value;
-          option.textContent = label;
+          option.value = pair[0];
+          option.textContent = pair[1];
           return option;
         }));
       }
-      select.value = payload.channel_target_id || '';
-      document.querySelector('#copy-token').disabled = !select.value;
-      if (Date.now() >= noteHoldUntil) {
-        document.querySelector('#sharing-note').textContent = select.value
-          ? '' : 'Assign a relay target to share this agreement.';
+      if (document.activeElement !== select) select.value = current?.uuid || '';
+      document.querySelector('#empty').hidden = Boolean(current);
+      document.querySelector('#new-section').disabled = !current;
+
+      const article = document.querySelector('#document');
+      // Never rebuild the document while it is being edited, or the caret
+      // is destroyed mid-word by the poll.
+      if (article.contains(document.activeElement)
+        && document.activeElement.isContentEditable) {
+        SovereignShell.refresh();
+        return;
       }
+      article.replaceChildren();
+      if (!current) { SovereignShell.refresh(); return; }
+
+      const heading = document.createElement('h2');
+      heading.textContent = current.data.title;
+      article.append(editable(heading, current.data.title, value =>
+        api('/api/agreement/agreements/rename', {agreement_uuid: current.uuid, title: value})));
+
+      for (const section of current.children.filter(node => !node.deleted)) {
+        const block = document.createElement('section');
+        block.dataset.status = nodeStatus(payload, section.uuid) || 'in_agreement';
+        const title = document.createElement('h3');
+        title.textContent = section.data.title;
+        const head = document.createElement('div');
+        head.className = 'section-head';
+        head.append(editable(title, section.data.title, value =>
+          api('/api/agreement/sections/rename', {section_uuid: section.uuid, title: value})));
+        const removeSection = document.createElement('button');
+        removeSection.type = 'button';
+        removeSection.className = 'danger subtle';
+        removeSection.textContent = 'Delete section';
+        removeSection.onclick = () => confirmAction(
+          'Delete this section?',
+          'Its clauses are deleted with it. This cannot be undone.',
+          async () => {
+            try {
+              await api('/api/agreement/sections/delete', {section_uuid: section.uuid});
+              await load();
+            } catch (error) { showToast(error.message, true); }
+          });
+        head.append(removeSection);
+        block.append(head);
+
+        for (const clause of section.children.filter(node => !node.deleted)) {
+          const row = document.createElement('div');
+          row.className = 'clause';
+          row.dataset.status = nodeStatus(payload, clause.uuid) || 'in_agreement';
+          const text = document.createElement('p');
+          text.textContent = clause.data.text;
+          row.append(editable(text, clause.data.text, value =>
+            api('/api/agreement/clauses/update', {clause_uuid: clause.uuid, text: value})));
+          const removeClause = document.createElement('button');
+          removeClause.type = 'button';
+          removeClause.className = 'danger subtle';
+          removeClause.textContent = 'Delete';
+          removeClause.onclick = async () => {
+            try {
+              await api('/api/agreement/clauses/delete', {clause_uuid: clause.uuid});
+              await load();
+            } catch (error) { showToast(error.message, true); }
+          };
+          row.append(removeClause);
+          block.append(row);
+        }
+        block.append(composer('Add a clause', value =>
+          api('/api/agreement/clauses/create', {section_uuid: section.uuid, text: value})));
+        article.append(block);
+      }
+      SovereignShell.refresh();
     };
+
     const load = async () => render(await api('/api/agreement/document'));
+
     document.querySelector('#new-agreement').onclick = async () => {
-      const title = prompt('Agreement title');
-      if (title) await api('/api/agreement/agreements/create', {title});
-      await load();
+      const title = 'Untitled agreement';
+      try {
+        await api('/api/agreement/agreements/create', {title});
+        await load();
+        showToast('Agreement created - click its title to rename it');
+      } catch (error) { showToast(error.message, true); }
     };
     document.querySelector('#new-section').onclick = async () => {
-      const title = prompt('Section title');
-      if (title && current) await api('/api/agreement/sections/create', {agreement_uuid: current.uuid, title});
-      await load();
+      if (!current) return;
+      try {
+        await api('/api/agreement/sections/create',
+          {agreement_uuid: current.uuid, title: 'Untitled section'});
+        await load();
+      } catch (error) { showToast(error.message, true); }
     };
     document.querySelector('#agreements').onchange = async event => {
       await api('/api/agreement/agreements/select', {agreement_uuid: event.target.value});
       await load();
     };
-    // Sharing goes through Core's channel-neutral routes only. This
-    // application names no channel implementation beyond the mailbox target
-    // it was given, which is what makes it a conformance proof.
-    const note = message => {
-      document.querySelector('#sharing-note').textContent = message;
-      noteHoldUntil = Date.now() + 6000;
-    };
-    document.querySelector('#target').onchange = async event => {
-      try {
-        await api('/api/channels/mailbox/topics/assign', {
-          topic_uuid: current.uuid, target_id: event.target.value || null,
-        });
-        await load();
-        note(event.target.value ? 'Relay target assigned.' : 'Relay target removed.');
-      } catch (error) { note(error.message); }
-    };
-    document.querySelector('#copy-token').onclick = async () => {
-      try {
-        const token = await api('/api/connect_token', {
-          topic_uuids: [current.uuid],
-          channel_options: {mailbox: {target_id: document.querySelector('#target').value}},
-        });
-        await navigator.clipboard.writeText(btoa(JSON.stringify(token)));
-        note('Token copied to the clipboard.');
-      } catch (error) { note(error.message); }
-    };
-    document.querySelector('#connect').onclick = async () => {
-      const field = document.querySelector('#token');
-      let token;
-      try {
-        token = JSON.parse(atob(field.value.trim()));
-      } catch (error) {
-        note('That is not a share token.');
-        return;
-      }
-      // Core renamed this field to token_version so the connect token and the
-      // channel descriptor stop both serializing a bare "version".
-      if (token.token_version !== 1 || !Array.isArray(token.topic_uuids) || !token.topic_uuids.length) {
-        note('Unrecognized token version.');
-        return;
-      }
-      try {
-        await api('/api/connect', {token});
-        field.value = '';
-        await load();
-        note('Connected.');
-      } catch (error) { note(error.message); }
-    };
+
+    SovereignShell.mount({
+      container: document.querySelector('#shell'),
+      applicationId: 'agreement',
+      topicUuid: () => current?.uuid || '',
+      state: () => payloadState,
+      onChanged: () => load(),
+    });
     load();
     setInterval(load, 3000);
   </script>

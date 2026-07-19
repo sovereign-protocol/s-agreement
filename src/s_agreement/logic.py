@@ -155,6 +155,16 @@ class AgreementLogic:
             "transition_events": events,
             "transition_by_node": self._transition_by_node(events),
             "network": self._network_info(selected.uuid if selected else None),
+            # Named mailbox targets and this agreement's assignment. The
+            # channel owns both; the application only forwards them so the UI
+            # can offer sharing without naming a channel implementation.
+            "channel_targets": (
+                self.channel_manager.list_targets() if self.channel_manager else []
+            ),
+            "channel_target_id": (
+                self.channel_manager.target_for_topic(selected.uuid)
+                if self.channel_manager and selected else None
+            ),
         }
 
     def _selected_agreement(self, requested_uuid: str | None,

@@ -233,7 +233,24 @@
       topicUuid: () => current?.uuid || '',
       state: () => payloadState,
       onChanged: () => load(),
+      // Name a node so the disagreement pane can say which clause or section
+      // is unsettled, rather than showing a bare uuid.
+      describeNode: (uuid) => {
+        if (!current) return '';
+        if (uuid === current.uuid) return current.data.title;
+        for (const section of current.children || []) {
+          if (section.uuid === uuid) return section.data.title;
+          for (const clause of section.children || []) {
+            if (clause.uuid === uuid) return (clause.data.text || '').slice(0, 60);
+          }
+        }
+        return '';
+      },
     });
+    // The agreement picker is this application's topic control until Core
+    // owns topic selection. Putting it in the shell's topic region keeps one
+    // header layout across applications.
+    SovereignShell.setTopicRegion(document.querySelector('#agreements'));
     load();
     setInterval(load, 3000);
   </script>

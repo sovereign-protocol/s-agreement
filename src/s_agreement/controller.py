@@ -62,6 +62,24 @@ def build_routes(logic, runtime, config: dict) -> list[Route]:
         data = await request.json()
         return await _json_result(runtime, logic.delete_clause(data["clause_uuid"]))
 
+    async def api_agenda_create(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.session.create_agenda_item(
+            data["agreement_uuid"], data.get("text", ""), data.get("priority"),
+        ))
+
+    async def api_agenda_delete(request: Request):
+        data = await request.json()
+        return await _json_result(
+            runtime, logic.session.delete_agenda_item(data["item_uuid"]),
+        )
+
+    async def api_agenda_priority(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.session.set_agenda_item_priority(
+            data["item_uuid"], data.get("priority"),
+        ))
+
     async def api_react(request: Request):
         data = await request.json()
         reaction = data.get("reaction", "adopt")
@@ -91,6 +109,9 @@ def build_routes(logic, runtime, config: dict) -> list[Route]:
         Route("/api/agreement/clauses/create", api_create_clause, methods=["POST"]),
         Route("/api/agreement/clauses/update", api_update_clause, methods=["POST"]),
         Route("/api/agreement/clauses/delete", api_delete_clause, methods=["POST"]),
+        Route("/api/agreement/agenda/create", api_agenda_create, methods=["POST"]),
+        Route("/api/agreement/agenda/delete", api_agenda_delete, methods=["POST"]),
+        Route("/api/agreement/agenda/set_priority", api_agenda_priority, methods=["POST"]),
         Route("/api/agreement/react", api_react, methods=["POST"]),
         Route("/api/agreement/adopt", api_adopt, methods=["POST"]),
     ]

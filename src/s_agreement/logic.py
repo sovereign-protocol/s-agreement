@@ -227,6 +227,13 @@ class AgreementLogic:
                 self.channel_manager.target_for_topic(selected.uuid)
                 if self.channel_manager and selected else None
             ),
+            # Agendas are Session's, so this application only forwards the
+            # merged list for the topic in view.
+            "agenda_items": [
+                node.to_dict() for node in
+                (self.session.agenda_items(selected.uuid) if selected else [])
+            ],
+            "identity_uuid": self.session.identity.uuid,
         }
 
     def _selected_agreement(self, requested_uuid: str | None,

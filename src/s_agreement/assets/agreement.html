@@ -295,6 +295,14 @@
       topicUuid: () => current?.uuid || '',
       state: () => payloadState,
       onChanged: () => load(),
+      // Route namespacing is per application, so the shell is told where
+      // this one exposes Session's agenda operations.
+      agendaRoutes: {
+        topicKey: 'agreement_uuid',
+        create: '/api/agreement/agenda/create',
+        delete: '/api/agreement/agenda/delete',
+        setPriority: '/api/agreement/agenda/set_priority',
+      },
       onCreateTopic: async () => {
         try {
           await api('/api/agreement/agreements/create', {title: 'Untitled agreement'});

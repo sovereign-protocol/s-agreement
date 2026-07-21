@@ -155,6 +155,34 @@ class AgreementLogic:
             self._remember_agreement(result.value)
         return result
 
+    # Reacting per node is what lets a divergence be left behind. Without it
+    # an agreement can reach a state it cannot exit: two sides edit the same
+    # clause, both see "diverged", and nothing either of them does resolves
+    # it. Both primitives are Session's; this application only names which
+    # node types may be reacted to.
+    REACTABLE = frozenset({"agreement", "agreement_section", "agreement_clause"})
+
+    def accept_peer_node(self, source_addr: str, node_uuid: str,
+                         adopt_absence: bool = False) -> SessionResult:
+        if not self._reactable(node_uuid):
+            return SessionResult("error", reason="node is not part of an agreement")
+        return self.session.accept_peer_node(source_addr, node_uuid, adopt_absence)
+
+    def rollback_peer_node(self, source_addr: str, node_uuid: str,
+                           rollback_absence: bool = False) -> SessionResult:
+        if not self._reactable(node_uuid):
+            return SessionResult("error", reason="node is not part of an agreement")
+        return self.session.rollback_peer_node(
+            source_addr, node_uuid, rollback_absence,
+        )
+
+    def _reactable(self, node_uuid: str) -> bool:
+        # A node absent locally is exactly the case worth reacting to - the
+        # peer has something this side does not - so absence is permitted and
+        # only a present node of a foreign type is refused.
+        node = self.session.protocol.index.get(node_uuid)
+        return node is None or node.data.get("type") in self.REACTABLE
+
     def adopt_peer_changes(self, source_addr: str,
                            agreement_uuid: str) -> SessionResult:
         if not self._node(agreement_uuid, "agreement"):
@@ -212,8 +240,7 @@ class AgreementLogic:
             return agreements[0]
         return None
 
-    @staticmethod
-    def _transition_by_node(events: list[dict]) -> dict:
+    def _transition_by_node(self, events: list[dict]) -> dict:
         priority = Session.TRANSITION_PRIORITY
         grouped: dict[str, dict] = {}
         for event in events:
@@ -223,7 +250,12 @@ class AgreementLogic:
             current = grouped.get(node_uuid)
             if not current or priority.get(event.get("type"), 0) > priority.get(
                     current.get("type"), 0):
-                grouped[node_uuid] = dict(event)
+                # The reaction rides with the transition so the view never has
+                # to work out whether this side or the peer holds the stale
+                # revision.
+                grouped[node_uuid] = dict(
+                    event, reaction=self.session.reaction_for_event(event),
+                )
         return grouped
 
     def _network_info(self, topic_uuid: str | None) -> dict:

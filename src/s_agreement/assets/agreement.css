@@ -12,24 +12,78 @@ header {
   border-bottom: 1px solid rgba(255, 255, 255, 0.12);
   padding: 10px 24px;
 }
-.toolbar { display: flex; gap: 8px; margin-bottom: 24px; }
-.section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.clause { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.clause p { flex: 1 1 auto; margin: 6px 0; }
+article { background: #f9fafb; color: #111827; padding: 32px 48px; border-radius: 8px; }
+section { border-top: 1px solid #d1d5db; padding: 6px 0; }
+button, select { padding: 8px 11px; border-radius: 6px; border: 1px solid #4b5563; }
+
+/* One row shape at every level: status on the left with the name, actions on
+   the right. Same grid for the agreement, its sections, and its clauses, so
+   the eye finds the same thing in the same place all the way down. */
+.element-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: baseline;
+  gap: 8px;
+  border-radius: 6px;
+  padding: 2px 4px;
+}
+.element-label { margin: 6px 0; min-width: 0; }
+h2.element-label { margin: 0 0 4px; }
+
+/* The lamp carries the explanation, so hovering the status tells you what is
+   unsettled without opening anything. */
+.status-lamp {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  align-self: center;
+  justify-self: center;
+  background: transparent;
+  border: 1px solid #d1d5db;
+  cursor: help;
+}
+.status-lamp[data-status="divergence"] { background: #dc2626; border-color: #dc2626; }
+.status-lamp[data-status="in_transition"] { background: #f59e0b; border-color: #f59e0b; }
+.status-lamp[data-status="peer_made_changes"],
+.status-lamp[data-status="local_missing_node"] { background: #2563eb; border-color: #2563eb; }
+.status-lamp[data-status="local_made_changes"],
+.status-lamp[data-status="peer_missing_node"] { background: #9ca3af; border-color: #9ca3af; }
+
+.element-row[data-status="divergence"] { background: rgba(220, 38, 38, 0.07); }
+.element-row[data-status="in_transition"] { background: rgba(245, 158, 11, 0.08); }
+
+.element-actions { display: inline-flex; align-items: center; gap: 6px; }
+.element-actions button {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.element-add {
+  background: none;
+  border: 1px solid #d1d5db;
+  color: #4b5563;
+  opacity: 0;
+}
+/* Reacting is the only way out of a divergence, so it is never hidden behind
+   hover - it simply does not exist while there is nothing to react to. */
+.element-react {
+  background: #111827;
+  border: 1px solid #111827;
+  color: #f9fafb;
+  font-weight: 600;
+}
+.element-delete {
+  background: none;
+  border: none;
+  color: #9a3412;
+  opacity: 0;
+}
+.element-row:hover .element-add,
+.element-row:hover .element-delete,
+.element-add:focus-visible,
+.element-delete:focus-visible { opacity: 1; }
+
 .editable { border-radius: 4px; padding: 2px 4px; margin-left: -4px; cursor: text; }
 .editable:hover { background: rgba(17, 24, 39, 0.06); }
 .editable:focus { outline: 2px solid #2563eb; outline-offset: 1px; background: #fff; }
-button.subtle { background: none; border: none; color: #9a3412; font-size: 12px; cursor: pointer; opacity: 0; }
-.section-head:hover button.subtle, .clause:hover button.subtle,
-button.subtle:focus { opacity: 1; }
-.composer { display: flex; gap: 6px; margin: 10px 0 4px; }
-.composer input { flex: 1 1 auto; padding: 6px 9px; border-radius: 6px; border: 1px solid #d1d5db; }
-button, select { padding: 8px 11px; border-radius: 6px; border: 1px solid #4b5563; }
-article { background: #f9fafb; color: #111827; padding: 32px 48px; border-radius: 8px; }
-section { border-top: 1px solid #d1d5db; padding: 12px 0; }
-[data-status="divergence"] { border-left: 3px solid #dc2626; padding-left: 12px; }
-[data-status="in_transition"] { border-left: 3px solid #f59e0b; padding-left: 12px; }
-[data-status]:not([data-status="in_agreement"])::before {
-  content: attr(data-status); display: block; color: #9a3412;
-  font-size: 11px; font-weight: 700; text-transform: uppercase;
-}

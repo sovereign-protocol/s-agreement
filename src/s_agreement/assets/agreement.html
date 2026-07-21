@@ -13,11 +13,9 @@
     <div id="shell"></div>
   </header>
   <main>
-    <div class="toolbar">
-      <select id="agreements" aria-label="Agreement"></select>
-      <button id="new-agreement">New agreement</button>
-      <button id="new-section">Add section</button>
-    </div>
+    <!-- The topic switcher. SovereignShell.setTopicRegion moves it into the
+         header at mount; it lives here only so the markup owns it. -->
+    <select id="agreements" aria-label="Agreement"></select>
     <p id="empty">Create or accept an agreement to begin.</p>
     <article id="document"></article>
   </main>
@@ -115,6 +113,81 @@
       return row;
     };
 
+    // One row shape for every level of the document:
+    //   left   [status] name/text
+    //   right  [add subelement]  and, on hover, [react] [delete]
+    // React is deliberately not hover-only. Delete is destructive and rare,
+    // so hiding it is right; reacting is the only way out of a divergence,
+    // and an exit you cannot see is not an exit. It appears whenever there
+    // is something to react to and stays hidden otherwise.
+    const elementRow = ({node, tag, field, rename, addLabel, onAdd, onDelete,
+                         deleteTitle, deleteMessage}) => {
+      const row = document.createElement('div');
+      row.className = 'element-row';
+      const transition = payloadState.transition_by_node?.[node.uuid];
+      const status = transition?.type && transition.type !== 'in_agreement'
+        ? transition.type : 'in_agreement';
+      row.dataset.status = status;
+
+      const lamp = document.createElement('span');
+      lamp.className = 'status-lamp';
+      lamp.dataset.status = status;
+      lamp.title = transition ? transitionLabel(transition) : 'In agreement';
+      lamp.setAttribute('aria-label', lamp.title);
+
+      const label = document.createElement(tag);
+      label.className = 'element-label';
+      label.textContent = node.data[field];
+      editable(label, node.data[field], rename);
+
+      const actions = document.createElement('span');
+      actions.className = 'element-actions';
+
+      if (onAdd) {
+        const add = document.createElement('button');
+        add.type = 'button';
+        add.className = 'element-add';
+        add.textContent = addLabel;
+        add.title = addLabel;
+        add.onclick = onAdd;
+        actions.append(add);
+      }
+
+      if (transition && transition.type !== 'in_agreement' && transition.peer_addr) {
+        const react = document.createElement('button');
+        react.type = 'button';
+        react.className = 'element-react';
+        react.textContent = transition.reaction === 'rollback' ? 'Keep mine' : 'Take theirs';
+        react.title = transitionLabel(transition);
+        react.onclick = async () => {
+          try {
+            await api('/api/agreement/react', {
+              node_uuid: node.uuid,
+              source_addr: transition.peer_addr,
+              reaction: transition.reaction || 'adopt',
+            });
+            await load();
+            showToast(transition.reaction === 'rollback'
+              ? 'Kept your version' : 'Took their version');
+          } catch (error) { showToast(error.message, true); }
+        };
+        actions.append(react);
+      }
+
+      if (onDelete) {
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'element-delete';
+        remove.textContent = 'Delete';
+        remove.title = 'Delete';
+        remove.onclick = () => confirmAction(deleteTitle, deleteMessage, onDelete);
+        actions.append(remove);
+      }
+
+      row.append(lamp, label, actions);
+      return row;
+    };
+
     const render = (payload) => {
       payloadState = payload;
       current = payload.agreement;
@@ -133,7 +206,6 @@
       }
       if (document.activeElement !== select) select.value = current?.uuid || '';
       document.querySelector('#empty').hidden = Boolean(current);
-      document.querySelector('#new-section').disabled = !current;
 
       const article = document.querySelector('#document');
       // Never rebuild the document while it is being edited, or the caret
@@ -146,59 +218,65 @@
       article.replaceChildren();
       if (!current) { SovereignShell.refresh(); return; }
 
-      const heading = document.createElement('h2');
-      heading.textContent = current.data.title;
-      article.append(editable(heading, current.data.title, value =>
-        api('/api/agreement/agreements/rename', {agreement_uuid: current.uuid, title: value})));
+      article.append(elementRow({
+        node: current,
+        tag: 'h2',
+        field: 'title',
+        rename: value => api('/api/agreement/agreements/rename',
+          {agreement_uuid: current.uuid, title: value}),
+        addLabel: '+ Section',
+        onAdd: async () => {
+          try {
+            await api('/api/agreement/sections/create',
+              {agreement_uuid: current.uuid, title: 'Untitled section'});
+            await load();
+          } catch (error) { showToast(error.message, true); }
+        },
+      }));
 
       for (const section of current.children.filter(node => !node.deleted)) {
         const block = document.createElement('section');
-        block.dataset.status = nodeStatus(payload, section.uuid) || 'in_agreement';
-        const title = document.createElement('h3');
-        title.textContent = section.data.title;
-        const head = document.createElement('div');
-        head.className = 'section-head';
-        head.append(editable(title, section.data.title, value =>
-          api('/api/agreement/sections/rename', {section_uuid: section.uuid, title: value})));
-        const removeSection = document.createElement('button');
-        removeSection.type = 'button';
-        removeSection.className = 'danger subtle';
-        removeSection.textContent = 'Delete section';
-        removeSection.onclick = () => confirmAction(
-          'Delete this section?',
-          'Its clauses are deleted with it. This cannot be undone.',
-          async () => {
+        block.append(elementRow({
+          node: section,
+          tag: 'h3',
+          field: 'title',
+          rename: value => api('/api/agreement/sections/rename',
+            {section_uuid: section.uuid, title: value}),
+          addLabel: '+ Clause',
+          onAdd: async () => {
+            try {
+              await api('/api/agreement/clauses/create',
+                {section_uuid: section.uuid, text: 'New clause'});
+              await load();
+            } catch (error) { showToast(error.message, true); }
+          },
+          onDelete: async () => {
             try {
               await api('/api/agreement/sections/delete', {section_uuid: section.uuid});
               await load();
             } catch (error) { showToast(error.message, true); }
-          });
-        head.append(removeSection);
-        block.append(head);
+          },
+          deleteTitle: 'Delete this section?',
+          deleteMessage: 'Its clauses are deleted with it. This cannot be undone.',
+        }));
 
         for (const clause of section.children.filter(node => !node.deleted)) {
-          const row = document.createElement('div');
-          row.className = 'clause';
-          row.dataset.status = nodeStatus(payload, clause.uuid) || 'in_agreement';
-          const text = document.createElement('p');
-          text.textContent = clause.data.text;
-          row.append(editable(text, clause.data.text, value =>
-            api('/api/agreement/clauses/update', {clause_uuid: clause.uuid, text: value})));
-          const removeClause = document.createElement('button');
-          removeClause.type = 'button';
-          removeClause.className = 'danger subtle';
-          removeClause.textContent = 'Delete';
-          removeClause.onclick = async () => {
-            try {
-              await api('/api/agreement/clauses/delete', {clause_uuid: clause.uuid});
-              await load();
-            } catch (error) { showToast(error.message, true); }
-          };
-          row.append(removeClause);
-          block.append(row);
+          block.append(elementRow({
+            node: clause,
+            tag: 'p',
+            field: 'text',
+            rename: value => api('/api/agreement/clauses/update',
+              {clause_uuid: clause.uuid, text: value}),
+            onDelete: async () => {
+              try {
+                await api('/api/agreement/clauses/delete', {clause_uuid: clause.uuid});
+                await load();
+              } catch (error) { showToast(error.message, true); }
+            },
+            deleteTitle: 'Delete this clause?',
+            deleteMessage: 'This cannot be undone.',
+          }));
         }
-        block.append(composer('Add a clause', value =>
-          api('/api/agreement/clauses/create', {section_uuid: section.uuid, text: value})));
         article.append(block);
       }
       SovereignShell.refresh();
@@ -206,22 +284,6 @@
 
     const load = async () => render(await api('/api/agreement/document'));
 
-    document.querySelector('#new-agreement').onclick = async () => {
-      const title = 'Untitled agreement';
-      try {
-        await api('/api/agreement/agreements/create', {title});
-        await load();
-        showToast('Agreement created - click its title to rename it');
-      } catch (error) { showToast(error.message, true); }
-    };
-    document.querySelector('#new-section').onclick = async () => {
-      if (!current) return;
-      try {
-        await api('/api/agreement/sections/create',
-          {agreement_uuid: current.uuid, title: 'Untitled section'});
-        await load();
-      } catch (error) { showToast(error.message, true); }
-    };
     document.querySelector('#agreements').onchange = async event => {
       await api('/api/agreement/agreements/select', {agreement_uuid: event.target.value});
       await load();
@@ -233,7 +295,13 @@
       topicUuid: () => current?.uuid || '',
       state: () => payloadState,
       onChanged: () => load(),
-      onCreateTopic: () => document.querySelector('#new-agreement').click(),
+      onCreateTopic: async () => {
+        try {
+          await api('/api/agreement/agreements/create', {title: 'Untitled agreement'});
+          await load();
+          showToast('Agreement created - click its title to rename it');
+        } catch (error) { showToast(error.message, true); }
+      },
       // Name a node so the disagreement pane can say which clause or section
       // is unsettled, rather than showing a bare uuid.
       describeNode: (uuid) => {

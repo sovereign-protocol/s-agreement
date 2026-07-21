@@ -11,6 +11,11 @@ APPLICATION_MANIFEST = ApplicationManifest(
     display_name="S-Agreement",
     data_schema_version=1,
     asset_package="s_agreement.assets",
+    icon=(
+        '<path d="M6 3h8l4 4v14H6z"></path>'
+        '<path d="M14 3v4h4"></path><path d="M9 13h6"></path>'
+        '<path d="M9 17h6"></path>'
+    ),
     ui_file="agreement.html",
     css_file="agreement.css",
 )

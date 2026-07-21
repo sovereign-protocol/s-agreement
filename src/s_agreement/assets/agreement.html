@@ -233,6 +233,7 @@
       topicUuid: () => current?.uuid || '',
       state: () => payloadState,
       onChanged: () => load(),
+      onCreateTopic: () => document.querySelector('#new-agreement').click(),
       // Name a node so the disagreement pane can say which clause or section
       // is unsettled, rather than showing a bare uuid.
       describeNode: (uuid) => {

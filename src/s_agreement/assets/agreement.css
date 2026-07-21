@@ -1,7 +1,17 @@
+/* Warm dark neutral, per U2 in DESIGN_UI_CONSISTENCY.md. The previous
+   #111827 was almost the Personal Cockpit's #0d1117, so the two applications
+   looked alike. Agreement is the only one with a light page in the middle -
+   the article below is #f9fafb - so a warm frame around white paper reads as
+   a document on a desk, and avoids every reserved colour. */
 :root { color-scheme: dark; }
-body { margin: 0; font: 15px system-ui, sans-serif; background: #111827; color: #e5e7eb; }
-header, main { max-width: 850px; margin: auto; padding: 18px 24px; }
-header { display: flex; align-items: center; justify-content: space-between; }
+body { margin: 0; font: 15px system-ui, sans-serif; background: #1c1a17; color: #ede9e3; }
+main { max-width: 850px; margin: auto; padding: 18px 24px; }
+/* Every application separates header from content with a rule; Agreement had
+   none, which is why its header read as floating. */
+header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 10px 24px;
+}
 .toolbar { display: flex; gap: 8px; margin-bottom: 24px; }
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .clause { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }

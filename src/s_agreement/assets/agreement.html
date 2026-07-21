@@ -297,6 +297,7 @@
       onChanged: () => load(),
       // Route namespacing is per application, so the shell is told where
       // this one exposes Session's agenda operations.
+      autoAdoptRoute: {path: '/api/agreement/auto_adopt', topicKey: 'agreement_uuid'},
       agendaRoutes: {
         topicKey: 'agreement_uuid',
         create: '/api/agreement/agenda/create',

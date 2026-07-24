@@ -339,7 +339,22 @@
     // owns topic selection. Putting it in the shell's topic region keeps one
     // header layout across applications.
     SovereignShell.setTopicRegion(document.querySelector('#agreements'));
-    load();
+
+    // Deep link from the overview: /apps/agreement?agreement=<uuid> selects
+    // that agreement on arrival, mirroring Kanban's ?board=<uuid>.
+    async function selectAgreementFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const uuid = params.get('agreement');
+      if (!uuid) return;
+      try {
+        await api('/api/agreement/agreements/select', {agreement_uuid: uuid});
+      } catch (error) { showToast(error.message, true); }
+      params.delete('agreement');
+      const query = params.toString();
+      window.history.replaceState({}, '', window.location.pathname + (query ? `?${query}` : ''));
+    }
+
+    selectAgreementFromUrl().then(load);
     setInterval(load, 3000);
   </script>
 </body>

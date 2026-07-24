@@ -1,8 +1,12 @@
 """S-Agreement manifest and host wiring."""
 
-from sovereign import ApplicationInstance, ApplicationManifest, ApplicationServices
+from sovereign import (
+    ApplicationFacade, ApplicationInstance, ApplicationManifest,
+    ApplicationServices,
+)
 
 from .controller import build_routes
+from .facade import AGREEMENT_FACADE_API_VERSION, AgreementFacade
 from .logic import AgreementLogic
 
 
@@ -32,4 +36,9 @@ def create_application(services: ApplicationServices) -> ApplicationInstance:
         logic=logic,
         registration=logic.application_registration(),
         controllers=tuple(build_routes(logic, services, dict(services.settings))),
+        facade=ApplicationFacade(
+            application_id=APPLICATION_MANIFEST.application_id,
+            facade_api_version=AGREEMENT_FACADE_API_VERSION,
+            api=AgreementFacade(logic),
+        ),
     )

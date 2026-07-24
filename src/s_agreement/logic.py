@@ -260,6 +260,7 @@ class AgreementLogic:
                 (self.session.agenda_items(selected.uuid) if selected else [])
             ],
             "identity_uuid": self.session.identity.uuid,
+            "known_identities": self.session.known_identities(),
             "auto_adopt_mode": (
                 self.session.auto_adopt_mode(selected.uuid) if selected else "always"
             ),

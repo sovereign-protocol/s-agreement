@@ -311,6 +311,16 @@
           showToast('Agreement created - click its title to rename it');
         } catch (error) { showToast(error.message, true); }
       },
+      // Agreement has no user model of its own, but Core resolves an address
+      // to an identity for the connected-peers list. Match on address, since
+      // network peers are keyed that way.
+      describePeer: (addr) => {
+        const known = (payloadState.known_identities || [])
+          .find((entry) => entry.address === addr);
+        return known
+          ? { label: known.name || addr, picture: known.picture || "" }
+          : { label: addr };
+      },
       // Name a node so the disagreement pane can say which clause or section
       // is unsettled, rather than showing a bare uuid.
       describeNode: (uuid) => {

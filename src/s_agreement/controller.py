@@ -76,6 +76,18 @@ def build_routes(logic, runtime, config: dict) -> list[Route]:
         data = await request.json()
         return await _json_result(runtime, logic.delete_section(data["section_uuid"]))
 
+    async def api_move_section(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.move_section(
+            data["section_uuid"], int(data.get("index", 0)),
+        ))
+
+    async def api_move_clause(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.move_clause(
+            data["clause_uuid"], int(data.get("index", 0)),
+        ))
+
     async def api_delete_clause(request: Request):
         data = await request.json()
         return await _json_result(runtime, logic.delete_clause(data["clause_uuid"]))
@@ -124,6 +136,8 @@ def build_routes(logic, runtime, config: dict) -> list[Route]:
         Route("/api/agreement/sections/create", api_create_section, methods=["POST"]),
         Route("/api/agreement/sections/rename", api_rename_section, methods=["POST"]),
         Route("/api/agreement/sections/delete", api_delete_section, methods=["POST"]),
+        Route("/api/agreement/sections/move", api_move_section, methods=["POST"]),
+        Route("/api/agreement/clauses/move", api_move_clause, methods=["POST"]),
         Route("/api/agreement/clauses/create", api_create_clause, methods=["POST"]),
         Route("/api/agreement/clauses/update", api_update_clause, methods=["POST"]),
         Route("/api/agreement/clauses/delete", api_delete_clause, methods=["POST"]),

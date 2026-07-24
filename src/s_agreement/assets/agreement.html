@@ -64,20 +64,31 @@
       };
       element.onclick = begin;
       element.onkeydown = (event) => {
-        if (event.key === 'Enter') { event.preventDefault(); element.blur(); }
-        if (event.key === 'Escape') {
+        // Not editing yet: Enter or Space begins editing.
+        if (!element.isContentEditable) {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            begin();
+          }
+          return;
+        }
+        // Editing: plain Enter commits; Shift+Enter inserts a line break
+        // (the browser's default for a contenteditable), so clauses can hold
+        // more than one line. Escape reverts.
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          element.blur();
+        } else if (event.key === 'Escape') {
           element.textContent = original;
           element.contentEditable = 'false';
           element.blur();
         }
-        if (!element.isContentEditable && (event.key === 'Enter' || event.key === ' ')) {
-          event.preventDefault();
-          begin();
-        }
       };
       element.onblur = async () => {
         element.contentEditable = 'false';
-        const value = element.textContent.trim();
+        // innerText, not textContent: it turns the line breaks a contenteditable
+        // inserts (as <br>/<div>) back into "\n", which textContent drops.
+        const value = element.innerText.replace(/\n+$/, '').trim();
         if (!value || value === original) { element.textContent = original; return; }
         try {
           await commit(value);
@@ -121,7 +132,7 @@
     // and an exit you cannot see is not an exit. It appears whenever there
     // is something to react to and stays hidden otherwise.
     const elementRow = ({node, tag, field, rename, addLabel, onAdd, onDelete,
-                         deleteTitle, deleteMessage}) => {
+                         deleteTitle, deleteMessage, index, count, onMove}) => {
       const row = document.createElement('div');
       row.className = 'element-row';
       const transition = payloadState.transition_by_node?.[node.uuid];
@@ -142,6 +153,26 @@
 
       const actions = document.createElement('span');
       actions.className = 'element-actions';
+
+      // Reorder among siblings. Up/down rather than drag: unambiguous, works
+      // by keyboard, and does not fight the click-to-edit on the text itself.
+      if (onMove) {
+        const up = document.createElement('button');
+        up.type = 'button';
+        up.className = 'element-move';
+        up.textContent = '↑';
+        up.title = 'Move up';
+        up.disabled = index === 0;
+        up.onclick = () => onMove(index - 1);
+        const down = document.createElement('button');
+        down.type = 'button';
+        down.className = 'element-move';
+        down.textContent = '↓';
+        down.title = 'Move down';
+        down.disabled = index === count - 1;
+        down.onclick = () => onMove(index + 1);
+        actions.append(up, down);
+      }
 
       if (onAdd) {
         const add = document.createElement('button');
@@ -187,6 +218,16 @@
       row.append(lamp, label, actions);
       return row;
     };
+
+    // Live children in display order. Mirrors Session._ordered_children: an
+    // explicit "order" wins, otherwise the node keeps its position in the
+    // payload (which is creation order), so items pre-dating ordering still
+    // sort sensibly.
+    const ordered = (children) => (children || [])
+      .filter(node => !node.deleted)
+      .map((node, position) => [node, node.data.order ?? position])
+      .sort((a, b) => a[1] - b[1])
+      .map(pair => pair[0]);
 
     const render = (payload) => {
       payloadState = payload;
@@ -234,7 +275,8 @@
         },
       }));
 
-      for (const section of current.children.filter(node => !node.deleted)) {
+      const sections = ordered(current.children);
+      sections.forEach((section, sIndex) => {
         const block = document.createElement('section');
         block.append(elementRow({
           node: section,
@@ -258,9 +300,19 @@
           },
           deleteTitle: 'Delete this section?',
           deleteMessage: 'Its clauses are deleted with it. This cannot be undone.',
+          index: sIndex,
+          count: sections.length,
+          onMove: async newIndex => {
+            try {
+              await api('/api/agreement/sections/move',
+                {section_uuid: section.uuid, index: newIndex});
+              await load();
+            } catch (error) { showToast(error.message, true); }
+          },
         }));
 
-        for (const clause of section.children.filter(node => !node.deleted)) {
+        const clauses = ordered(section.children);
+        clauses.forEach((clause, cIndex) => {
           block.append(elementRow({
             node: clause,
             tag: 'p',
@@ -275,10 +327,19 @@
             },
             deleteTitle: 'Delete this clause?',
             deleteMessage: 'This cannot be undone.',
+            index: cIndex,
+            count: clauses.length,
+            onMove: async newIndex => {
+              try {
+                await api('/api/agreement/clauses/move',
+                  {clause_uuid: clause.uuid, index: newIndex});
+                await load();
+              } catch (error) { showToast(error.message, true); }
+            },
           }));
-        }
+        });
         article.append(block);
-      }
+      });
       SovereignShell.refresh();
     };
 

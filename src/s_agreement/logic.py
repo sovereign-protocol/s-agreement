@@ -73,7 +73,13 @@ class AgreementLogic:
             return SessionResult("error", reason="section title is required")
         result = self.session.create_child(
             agreement.uuid,
-            {"type": "agreement_section", "title": normalized},
+            {
+                "type": "agreement_section",
+                "title": normalized,
+                "order": self.session.next_child_order(
+                    agreement.uuid, "agreement_section",
+                ),
+            },
             {},
         )
         if result.status == "ok":
@@ -91,7 +97,13 @@ class AgreementLogic:
             return SessionResult("error", reason="clause text is required")
         result = self.session.create_child(
             section.uuid,
-            {"type": "agreement_clause", "text": normalized},
+            {
+                "type": "agreement_clause",
+                "text": normalized,
+                "order": self.session.next_child_order(
+                    section.uuid, "agreement_clause",
+                ),
+            },
             {},
         )
         if result.status == "ok":
@@ -144,6 +156,16 @@ class AgreementLogic:
         if not clause:
             return SessionResult("error", reason="clause not found")
         return self.session.delete(clause.uuid)
+
+    def move_section(self, section_uuid: str, index: int) -> SessionResult:
+        if not self._node(section_uuid, "agreement_section"):
+            return SessionResult("error", reason="section not found")
+        return self.session.move_child_to_index(section_uuid, index)
+
+    def move_clause(self, clause_uuid: str, index: int) -> SessionResult:
+        if not self._node(clause_uuid, "agreement_clause"):
+            return SessionResult("error", reason="clause not found")
+        return self.session.move_child_to_index(clause_uuid, index)
 
     def accept_agreement_invitation(self, subtree: ProtocolNode) -> SessionResult:
         if subtree.data.get("type") != "agreement":
@@ -222,27 +244,50 @@ class AgreementLogic:
             effects=self.session.sync_effects(agreement_uuid) if changed else [],
         )
 
-    def transition_events(self, agreement_uuid: str) -> list[dict]:
+    def transition_events(
+        self, agreement_uuid: str, network: dict | None = None,
+    ) -> list[dict]:
         events: list[dict] = []
         for address in sorted(self.session.peer_perspectives):
             if not self.session.peer_discusses_node(address, agreement_uuid):
                 continue
+            peer_info = ((network or {}).get("peers") or {}).get(address) or {}
+            liveness = peer_info.get("channel_liveness")
+            if liveness is None:
+                resolver = getattr(
+                    self.channel_manager, "peer_liveness_for_address", None,
+                )
+                liveness = (
+                    resolver(address, agreement_uuid)
+                    if resolver else {"state": "unknown"}
+                )
+            liveness = liveness or {"state": "unknown"}
             events.extend(
-                self.session.analyze_peer_transitions(address, agreement_uuid)
+                event
+                for event in self.session.analyze_peer_transitions(
+                    address, agreement_uuid,
+                )
+                if not (
+                    event["type"] == "in_transition"
+                    and liveness.get("state") == "stale"
+                )
             )
         return events
 
     def document_payload(self, agreement_uuid: str | None = None) -> dict:
         agreements = self.agreements()
         selected = self._selected_agreement(agreement_uuid, agreements)
-        events = self.transition_events(selected.uuid) if selected else []
+        network = self._network_info(selected.uuid if selected else None)
+        events = (
+            self.transition_events(selected.uuid, network) if selected else []
+        )
         return {
             "address": self.session.address,
             "agreement": selected.to_dict() if selected else None,
             "agreements": [node.to_dict() for node in agreements],
             "transition_events": events,
             "transition_by_node": self._transition_by_node(events),
-            "network": self._network_info(selected.uuid if selected else None),
+            "network": network,
             # Named mailbox targets and this agreement's assignment. The
             # channel owns both; the application only forwards them so the UI
             # can offer sharing without naming a channel implementation.

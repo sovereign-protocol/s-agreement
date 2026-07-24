@@ -27,7 +27,9 @@ button, select { padding: 8px 11px; border-radius: 6px; border: 1px solid #4b556
   border-radius: 6px;
   padding: 2px 4px;
 }
-.element-label { margin: 6px 0; min-width: 0; }
+/* pre-wrap keeps the line breaks a multi-line clause was written with, both
+   while editing and once rendered. */
+.element-label { margin: 6px 0; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 h2.element-label { margin: 0 0 4px; }
 
 /* The lamp carries the explanation, so hovering the status tells you what is
@@ -79,10 +81,22 @@ h2.element-label { margin: 0 0 4px; }
   color: #9a3412;
   opacity: 0;
 }
+.element-move {
+  background: none;
+  border: 1px solid #d1d5db;
+  color: #4b5563;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 6px;
+  opacity: 0;
+}
+.element-move:disabled { opacity: 0; cursor: default; }
 .element-row:hover .element-add,
 .element-row:hover .element-delete,
+.element-row:hover .element-move:not(:disabled),
 .element-add:focus-visible,
-.element-delete:focus-visible { opacity: 1; }
+.element-delete:focus-visible,
+.element-move:focus-visible { opacity: 1; }
 
 .editable { border-radius: 4px; padding: 2px 4px; margin-left: -4px; cursor: text; }
 .editable:hover { background: rgba(17, 24, 39, 0.06); }

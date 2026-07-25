@@ -5,9 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "s-agreement"
 version = "0.1.0a1"
-description = "S-Agreement conformance application for Sovereign Core"
+description = "S-Agreement conformance example for Sovereign Core"
 requires-python = ">=3.10"
+license = "LGPL-3.0-or-later"
+license-files = ["LICENSE", "LICENSES/*"]
+keywords = ["local-first", "collaboration", "sovereign-protocol"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.14",
+  "Operating System :: Microsoft :: Windows",
+]
 dependencies = ["sovereign-protocol>=0.1.0,<0.2"]
+
+# Ships inside the core repository as a conformance example, so its links
+# point there rather than at a repository of its own.
+[project.urls]
+Homepage = "https://github.com/sovereign-protocol/core"
+Source = "https://github.com/sovereign-protocol/core/tree/main/examples/s-agreement"
+Issues = "https://github.com/sovereign-protocol/core/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

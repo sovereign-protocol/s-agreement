@@ -261,6 +261,11 @@ class AgreementLogic:
             "agreements": [node.to_dict() for node in agreements],
             "transition_events": events,
             "transition_by_node": self._transition_by_node(events),
+            # Agreement changes are proposals until explicitly accepted.
+            # Expose only the peer-only agreement nodes needed to present
+            # those proposals; the application does not receive or manage
+            # channel state, nor does the UI need the complete peer cache.
+            "proposed_nodes": self._proposed_nodes(events),
             "network": network,
             # Agendas are Session's, so this application only forwards the
             # merged list for the topic in view.
@@ -271,6 +276,32 @@ class AgreementLogic:
             "identity_uuid": self.session.identity.uuid,
             "known_identities": self.session.known_identities(),
         }
+
+    def _proposed_nodes(self, events: list[dict]) -> list[dict]:
+        proposals: list[dict] = []
+        seen: set[str] = set()
+        for event in events:
+            if event.get("type") != "local_missing_node":
+                continue
+            node_uuid = event.get("node_uuid")
+            source_addr = event.get("peer_addr")
+            if not node_uuid or not source_addr or node_uuid in seen:
+                continue
+            peer_node = self.session.get_cached_peer_subtree(
+                source_addr, node_uuid,
+            )
+            if (
+                not peer_node
+                or peer_node.deleted
+                or peer_node.data.get("type") not in self.REACTABLE
+            ):
+                continue
+            seen.add(node_uuid)
+            proposals.append({
+                "source_addr": source_addr,
+                "node": peer_node.to_dict(),
+            })
+        return proposals
 
     def _selected_agreement(self, requested_uuid: str | None,
                             agreements: list[ProtocolNode]) -> ProtocolNode | None:

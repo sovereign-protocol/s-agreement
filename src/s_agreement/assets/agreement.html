@@ -13,9 +13,6 @@
     <div id="shell"></div>
   </header>
   <main>
-    <!-- The topic switcher. SovereignShell.setTopicRegion moves it into the
-         header at mount; it lives here only so the markup owns it. -->
-    <select id="agreements" aria-label="Agreement"></select>
     <p id="empty">Create or accept an agreement to begin.</p>
     <article id="document"></article>
   </main>
@@ -132,9 +129,11 @@
     // and an exit you cannot see is not an exit. It appears whenever there
     // is something to react to and stays hidden otherwise.
     const elementRow = ({node, tag, field, rename, addLabel, onAdd, onDelete,
-                         deleteTitle, deleteMessage, index, count, onMove}) => {
+                         deleteTitle, deleteMessage, index, count, onMove,
+                         proposed = false}) => {
       const row = document.createElement('div');
       row.className = 'element-row';
+      row.classList.toggle('is-proposed', proposed);
       const transition = payloadState.transition_by_node?.[node.uuid];
       const status = transition?.type && transition.type !== 'in_agreement'
         ? transition.type : 'in_agreement';
@@ -149,10 +148,16 @@
       const label = document.createElement(tag);
       label.className = 'element-label';
       label.textContent = node.data[field];
-      editable(label, node.data[field], rename);
+      if (rename && !proposed) editable(label, node.data[field], rename);
 
       const actions = document.createElement('span');
       actions.className = 'element-actions';
+      if (proposed) {
+        const badge = document.createElement('span');
+        badge.className = 'proposal-badge';
+        badge.textContent = 'Proposed';
+        actions.append(badge);
+      }
 
       // Reorder among siblings. Up/down rather than drag: unambiguous, works
       // by keyboard, and does not fight the click-to-edit on the text itself.
@@ -184,11 +189,25 @@
         actions.append(add);
       }
 
-      if (transition && transition.type !== 'in_agreement' && transition.peer_addr) {
+      if (transition
+          && !['in_agreement', 'in_transition'].includes(transition.type)
+          && transition.peer_addr) {
         const react = document.createElement('button');
         react.type = 'button';
         react.className = 'element-react';
-        react.textContent = transition.reaction === 'rollback' ? 'Keep mine' : 'Take theirs';
+        const sourceType = transition.original_type || transition.type;
+        const rollback = transition.reaction === 'rollback';
+        const peerMissing = sourceType === 'peer_missing_node';
+        const withdraw = rollback && peerMissing;
+        const acceptRemoval = !rollback && peerMissing;
+        react.textContent = withdraw
+          ? 'Withdraw proposal'
+          : (acceptRemoval
+            ? 'Accept removal'
+          : (rollback
+            ? 'Revert mine'
+            : (sourceType === 'local_missing_node'
+              ? 'Accept proposal' : 'Take theirs')));
         react.title = transitionLabel(transition);
         react.onclick = async () => {
           try {
@@ -196,10 +215,14 @@
               node_uuid: node.uuid,
               source_addr: transition.peer_addr,
               reaction: transition.reaction || 'adopt',
+              absent: peerMissing,
             });
             await load();
-            showToast(transition.reaction === 'rollback'
-              ? 'Kept your version' : 'Took their version');
+            showToast(withdraw
+              ? 'Proposal withdrawn'
+              : (rollback
+                ? 'Reverted your change'
+                : (acceptRemoval ? 'Removal accepted' : 'Accepted their version')));
           } catch (error) { showToast(error.message, true); }
         };
         actions.append(react);
@@ -229,23 +252,66 @@
       .sort((a, b) => a[1] - b[1])
       .map(pair => pair[0]);
 
+    const proposedChildren = (parentUuid) => (payloadState.proposed_nodes || [])
+      .map(entry => entry.node)
+      .filter(node => !node.deleted && node.parent_uuid === parentUuid);
+
+    const displayedChildren = (parent, inheritedProposal = false) => {
+      const entries = ordered(parent.children).map(node => ({
+        node, proposed: inheritedProposal,
+      }));
+      if (!inheritedProposal) {
+        const present = new Set(entries.map(entry => entry.node.uuid));
+        for (const node of proposedChildren(parent.uuid)) {
+          if (!present.has(node.uuid)) entries.push({node, proposed: true});
+        }
+      }
+      return entries
+        .map((entry, position) => [
+          entry, entry.node.data.order ?? position,
+        ])
+        .sort((a, b) => a[1] - b[1])
+        .map(pair => pair[0]);
+    };
+
+    const findDisplayedNode = (uuid) => {
+      const roots = [
+        current,
+        ...(payloadState.proposed_nodes || []).map(entry => entry.node),
+      ].filter(Boolean);
+      const pending = [...roots];
+      const seen = new Set();
+      while (pending.length) {
+        const node = pending.pop();
+        if (!node || seen.has(node.uuid)) continue;
+        if (node.uuid === uuid) return node;
+        seen.add(node.uuid);
+        pending.push(...(node.children || []));
+      }
+      return null;
+    };
+
     const render = (payload) => {
       payloadState = payload;
       current = payload.agreement;
-      const select = document.querySelector('#agreements');
-      const wanted = payload.agreements.map(item => [item.uuid, item.data.title]);
-      const shown = [...select.options].map(option => [option.value, option.textContent]);
-      const same = shown.length === wanted.length
-        && wanted.every((pair, index) => shown[index][0] === pair[0] && shown[index][1] === pair[1]);
-      if (!same && document.activeElement !== select) {
-        select.replaceChildren(...wanted.map(pair => {
-          const option = document.createElement('option');
-          option.value = pair[0];
-          option.textContent = pair[1];
-          return option;
-        }));
-      }
-      if (document.activeElement !== select) select.value = current?.uuid || '';
+      SovereignShell.setTopicSelector({
+        label: 'Agreement',
+        topics: payload.agreements.map(item => ({
+          uuid: item.uuid,
+          title: item.data.title || 'Untitled agreement',
+        })),
+        selectedUuid: current?.uuid || '',
+        onSelect: async agreementUuid => {
+          await api('/api/agreement/agreements/select',
+            {agreement_uuid: agreementUuid});
+          await load();
+        },
+        onRename: current ? async title => {
+          await api('/api/agreement/agreements/rename',
+            {agreement_uuid: current.uuid, title});
+          await load();
+        } : null,
+      });
       document.querySelector('#empty').hidden = Boolean(current);
 
       const article = document.querySelector('#document');
@@ -275,24 +341,28 @@
         },
       }));
 
-      const sections = ordered(current.children);
-      sections.forEach((section, sIndex) => {
+      const sections = displayedChildren(current);
+      const sectionsHaveProposals = sections.some(entry => entry.proposed);
+      sections.forEach(({node: section, proposed}, sIndex) => {
         const block = document.createElement('section');
         block.append(elementRow({
           node: section,
           tag: 'h3',
           field: 'title',
-          rename: value => api('/api/agreement/sections/rename',
-            {section_uuid: section.uuid, title: value}),
+          proposed,
+          rename: proposed ? null : value => api(
+            '/api/agreement/sections/rename',
+            {section_uuid: section.uuid, title: value},
+          ),
           addLabel: '+ Clause',
-          onAdd: async () => {
+          onAdd: proposed ? null : async () => {
             try {
               await api('/api/agreement/clauses/create',
                 {section_uuid: section.uuid, text: 'New clause'});
               await load();
             } catch (error) { showToast(error.message, true); }
           },
-          onDelete: async () => {
+          onDelete: proposed ? null : async () => {
             try {
               await api('/api/agreement/sections/delete', {section_uuid: section.uuid});
               await load();
@@ -302,7 +372,7 @@
           deleteMessage: 'Its clauses are deleted with it. This cannot be undone.',
           index: sIndex,
           count: sections.length,
-          onMove: async newIndex => {
+          onMove: proposed || sectionsHaveProposals ? null : async newIndex => {
             try {
               await api('/api/agreement/sections/move',
                 {section_uuid: section.uuid, index: newIndex});
@@ -311,15 +381,19 @@
           },
         }));
 
-        const clauses = ordered(section.children);
-        clauses.forEach((clause, cIndex) => {
+        const clauses = displayedChildren(section, proposed);
+        const clausesHaveProposals = clauses.some(entry => entry.proposed);
+        clauses.forEach(({node: clause, proposed: clauseProposed}, cIndex) => {
           block.append(elementRow({
             node: clause,
             tag: 'p',
             field: 'text',
-            rename: value => api('/api/agreement/clauses/update',
-              {clause_uuid: clause.uuid, text: value}),
-            onDelete: async () => {
+            proposed: clauseProposed,
+            rename: clauseProposed ? null : value => api(
+              '/api/agreement/clauses/update',
+              {clause_uuid: clause.uuid, text: value},
+            ),
+            onDelete: clauseProposed ? null : async () => {
               try {
                 await api('/api/agreement/clauses/delete', {clause_uuid: clause.uuid});
                 await load();
@@ -329,7 +403,7 @@
             deleteMessage: 'This cannot be undone.',
             index: cIndex,
             count: clauses.length,
-            onMove: async newIndex => {
+            onMove: clauseProposed || clausesHaveProposals ? null : async newIndex => {
               try {
                 await api('/api/agreement/clauses/move',
                   {clause_uuid: clause.uuid, index: newIndex});
@@ -345,11 +419,6 @@
 
     const load = async () => render(await api('/api/agreement/document'));
 
-    document.querySelector('#agreements').onchange = async event => {
-      await api('/api/agreement/agreements/select', {agreement_uuid: event.target.value});
-      await load();
-    };
-
     SovereignShell.mount({
       container: document.querySelector('#shell'),
       applicationId: 'agreement',
@@ -362,41 +431,15 @@
         delete: '/api/agreement/agenda/delete',
         setPriority: '/api/agreement/agenda/set_priority',
       },
-      onCreateTopic: async () => {
-        try {
-          await api('/api/agreement/agreements/create', {title: 'Untitled agreement'});
-          await load();
-          showToast('Agreement created - click its title to rename it');
-        } catch (error) { showToast(error.message, true); }
-      },
-      // Agreement has no user model of its own, but Core resolves an address
-      // to an identity for the connected-peers list. Match on address, since
-      // network peers are keyed that way.
-      describePeer: (addr) => {
-        const known = (payloadState.known_identities || [])
-          .find((entry) => entry.address === addr);
-        return known
-          ? { label: known.name || addr, picture: known.picture || "" }
-          : { label: addr };
-      },
       // Name a node so the disagreement pane can say which clause or section
       // is unsettled, rather than showing a bare uuid.
       describeNode: (uuid) => {
-        if (!current) return '';
-        if (uuid === current.uuid) return current.data.title;
-        for (const section of current.children || []) {
-          if (section.uuid === uuid) return section.data.title;
-          for (const clause of section.children || []) {
-            if (clause.uuid === uuid) return (clause.data.text || '').slice(0, 60);
-          }
-        }
-        return '';
+        const node = findDisplayedNode(uuid);
+        return node
+          ? (node.data.title || node.data.text || '').slice(0, 60)
+          : '';
       },
     });
-    // The agreement picker is this application's topic control until Core
-    // owns topic selection. Putting it in the shell's topic region keeps one
-    // header layout across applications.
-    SovereignShell.setTopicRegion(document.querySelector('#agreements'));
 
     // Deep link from the overview: /apps/agreement?agreement=<uuid> selects
     // that agreement on arrival, mirroring Kanban's ?board=<uuid>.

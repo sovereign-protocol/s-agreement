@@ -29,7 +29,7 @@ def create_application(services: ApplicationServices) -> ApplicationInstance:
     logic = AgreementLogic(
         services.session,
         dict(services.settings),
-        services.channel_manager,
+        services.collaboration,
     )
     return ApplicationInstance(
         manifest=APPLICATION_MANIFEST,

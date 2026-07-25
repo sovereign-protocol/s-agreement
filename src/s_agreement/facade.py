@@ -31,3 +31,18 @@ class AgreementFacade:
 
     def transition_by_node(self, events: list[dict]) -> dict:
         return self._logic._transition_by_node(events)
+
+    def collaboration_context(self, topic_uuid: str) -> dict:
+        agreement = self._logic.session.get_node(topic_uuid)
+        if not agreement or agreement.data.get("type") != "agreement":
+            return {}
+        events = self._logic.transition_events(topic_uuid)
+        return {
+            "agenda_items": [
+                item.to_dict() for item in self._logic.session.agenda_items(topic_uuid)
+            ],
+            "transition_events": events,
+            "transition_by_node": self._logic._transition_by_node(events),
+            "identity_uuid": self._logic.session.identity.uuid,
+            "known_identities": self._logic.session.known_identities(),
+        }

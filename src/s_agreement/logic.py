@@ -16,10 +16,10 @@ AGREEMENT_APP_NAME = "S-Agreement"
 
 class AgreementLogic:
     def __init__(self, session: Session, config: dict | None = None,
-                 channel_manager=None):
+                 collaboration=None):
         self.session = session
         self.config = config or {}
-        self.channel_manager = channel_manager
+        self.collaboration = collaboration
         self.session.identity
 
     def application_registration(self) -> ApplicationRegistration:
@@ -205,32 +205,6 @@ class AgreementLogic:
         node = self.session.protocol.index.get(node_uuid)
         return node is None or node.data.get("type") in self.REACTABLE
 
-    def auto_adopt_mode(self, agreement_uuid: str) -> str:
-        return self.session.auto_adopt_mode(agreement_uuid)
-
-    def set_auto_adopt_mode(self, agreement_uuid: str, mode: str) -> SessionResult:
-        if not self._node(agreement_uuid, "agreement"):
-            return SessionResult("error", reason="agreement not found")
-        return self.session.set_auto_adopt_mode(agreement_uuid, mode)
-
-    def apply_auto_adopt(self, agreement_uuid: str) -> list:
-        """Reconcile every peer's changes when this topic is set to always.
-
-        A setting that changed nothing would be worse than no setting, so the
-        policy is applied where the document is read. Only the two universal
-        modes exist here: an agreement has no ownership model to judge a
-        narrower one against.
-        """
-        if self.session.auto_adopt_mode(agreement_uuid) != "always":
-            return []
-        effects: list = []
-        for address in sorted(self.session.peer_perspectives):
-            if not self.session.peer_discusses_node(address, agreement_uuid):
-                continue
-            if self.session.reconcile_peer_changes(address, agreement_uuid):
-                effects.extend(self.session.sync_effects(agreement_uuid))
-        return effects
-
     def adopt_peer_changes(self, source_addr: str,
                            agreement_uuid: str) -> SessionResult:
         if not self._node(agreement_uuid, "agreement"):
@@ -255,7 +229,7 @@ class AgreementLogic:
             liveness = peer_info.get("channel_liveness")
             if liveness is None:
                 resolver = getattr(
-                    self.channel_manager, "peer_liveness_for_address", None,
+                    self.collaboration, "peer_liveness_for_address", None,
                 )
                 liveness = (
                     resolver(address, agreement_uuid)
@@ -288,16 +262,6 @@ class AgreementLogic:
             "transition_events": events,
             "transition_by_node": self._transition_by_node(events),
             "network": network,
-            # Named mailbox targets and this agreement's assignment. The
-            # channel owns both; the application only forwards them so the UI
-            # can offer sharing without naming a channel implementation.
-            "channel_targets": (
-                self.channel_manager.list_targets() if self.channel_manager else []
-            ),
-            "channel_target_id": (
-                self.channel_manager.target_for_topic(selected.uuid)
-                if self.channel_manager and selected else None
-            ),
             # Agendas are Session's, so this application only forwards the
             # merged list for the topic in view.
             "agenda_items": [
@@ -306,10 +270,6 @@ class AgreementLogic:
             ],
             "identity_uuid": self.session.identity.uuid,
             "known_identities": self.session.known_identities(),
-            "auto_adopt_mode": (
-                self.session.auto_adopt_mode(selected.uuid) if selected else "always"
-            ),
-            "auto_adopt_modes": list(Session.AUTO_ADOPT_MODES),
         }
 
     def _selected_agreement(self, requested_uuid: str | None,
@@ -342,8 +302,8 @@ class AgreementLogic:
         return grouped
 
     def _network_info(self, topic_uuid: str | None) -> dict:
-        if self.channel_manager:
-            return self.channel_manager.network_info(topic_uuid)
+        if self.collaboration:
+            return self.collaboration.network_info(topic_uuid)
         return self.session.get_network_info()
 
     def _node(self, node_uuid: str | None,

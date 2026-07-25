@@ -13,26 +13,7 @@ from starlette.routing import Route
 def build_routes(logic, runtime, config: dict) -> list[Route]:
     async def api_document(request: Request):
         requested = request.query_params.get("agreement_uuid")
-        payload = logic.document_payload(requested)
-        # Apply the topic's adoption policy where the document is read, then
-        # re-read so the caller sees the settled state rather than the state
-        # it was about to leave.
-        selected = payload.get("agreement")
-        if selected:
-            effects = await asyncio.to_thread(logic.apply_auto_adopt, selected["uuid"])
-            if effects:
-                await asyncio.to_thread(
-                    runtime.channel_manager.execute_effects, effects,
-                )
-                runtime.notify_change()
-                payload = logic.document_payload(requested)
-        return JSONResponse(json_value(payload))
-
-    async def api_auto_adopt(request: Request):
-        data = await request.json()
-        return await _json_result(runtime, logic.set_auto_adopt_mode(
-            data["agreement_uuid"], data.get("mode", "always"),
-        ))
+        return JSONResponse(json_value(logic.document_payload(requested)))
 
     async def api_create_agreement(request: Request):
         data = await request.json()
@@ -144,7 +125,6 @@ def build_routes(logic, runtime, config: dict) -> list[Route]:
         Route("/api/agreement/agenda/create", api_agenda_create, methods=["POST"]),
         Route("/api/agreement/agenda/delete", api_agenda_delete, methods=["POST"]),
         Route("/api/agreement/agenda/set_priority", api_agenda_priority, methods=["POST"]),
-        Route("/api/agreement/auto_adopt", api_auto_adopt, methods=["POST"]),
         Route("/api/agreement/react", api_react, methods=["POST"]),
         Route("/api/agreement/adopt", api_adopt, methods=["POST"]),
     ]
@@ -154,7 +134,7 @@ async def _json_result(runtime, result) -> JSONResponse:
     deliveries = []
     if result.status == "ok":
         deliveries = await asyncio.to_thread(
-            runtime.channel_manager.execute_effects, result.effects,
+            runtime.deliver_effects, result.effects,
         )
         runtime.notify_change()
     view = application_result_view(result, deliveries)

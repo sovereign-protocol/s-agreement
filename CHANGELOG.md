@@ -1,0 +1,22 @@
+# Changelog
+
+## Unreleased
+
+- Moved out of the Core repository into its own, where every other
+  application already lives.
+- Relicensed from `LGPL-3.0-or-later` to **Apache-2.0**. It carried Core's
+  licence only because it sat inside Core's repository, whose `NOTICE` makes
+  the repository licence the default for examples. As an application it takes
+  the application licence, matching S-Kanban and Personal Cockpit. Sole
+  copyright holder, so no contributor consent was required.
+- Added a desktop entry point and the `desktop` extra, so it can open in its
+  own window like S-Kanban.
+
+Its history from inside the Core repository is preserved; commits before this
+point were made while it lived at `examples/s-agreement`.
+
+## 0.1.0a1 — unreleased from the Core repository
+
+- Agreement documents with sections and clauses, reorderable and multi-line.
+- Peer-only nodes presented as proposals to accept or withdraw.
+- Versioned application facade for cross-application consumers.

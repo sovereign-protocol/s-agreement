@@ -5,9 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "s-agreement"
 version = "0.1.0a1"
-description = "S-Agreement conformance example for Sovereign Core"
+description = "S-Agreement collaborative document application for Sovereign Core"
+readme = "README.md"
 requires-python = ">=3.10"
-license = "LGPL-3.0-or-later"
+# Apache-2.0, as every application is. It carried Core's LGPL only because it
+# lived inside Core's repository, where NOTICE makes the repository licence
+# the default for examples.
+license = "Apache-2.0"
 license-files = ["LICENSE", "LICENSES/*"]
 keywords = ["local-first", "collaboration", "sovereign-protocol"]
 classifiers = [
@@ -18,14 +22,22 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
   "Operating System :: Microsoft :: Windows",
 ]
-dependencies = ["sovereign-protocol>=0.1.0,<0.2"]
+dependencies = ["sovereign-protocol>=0.1.1,<0.2"]
 
-# Ships inside the core repository as a conformance example, so its links
-# point there rather than at a repository of its own.
+# A package whose argument is auditability must say where its source is.
 [project.urls]
-Homepage = "https://github.com/sovereign-protocol/core"
-Source = "https://github.com/sovereign-protocol/core/tree/main/examples/s-agreement"
-Issues = "https://github.com/sovereign-protocol/core/issues"
+Homepage = "https://github.com/sovereign-protocol/s-agreement"
+Source = "https://github.com/sovereign-protocol/s-agreement"
+Issues = "https://github.com/sovereign-protocol/s-agreement/issues"
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+# The window only. Everything else works headless, so this stays optional and
+# the launcher explains the install when it is missing.
+desktop = ["pywebview>=5,<6"]
+
+[project.scripts]
+s-agreement-desktop = "s_agreement.desktop:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -36,3 +48,6 @@ include = ["s_agreement*"]
 
 [tool.setuptools.package-data]
 "s_agreement.assets" = ["*.css", "*.html", "*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

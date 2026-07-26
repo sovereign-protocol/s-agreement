@@ -1,0 +1,54 @@
+name: Publish
+
+# Driven by a tag, so what reaches PyPI is always a commit already in public
+# history rather than whatever a maintainer happened to have locally.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python -m pip install build twine
+      - run: python -m build
+      # An application wheel must carry its own Apache-2.0 text. Core's LGPL
+      # licence travels with Core, which stays a separately installed
+      # dependency rather than being vendored in here.
+      - name: Verify licence payload and metadata
+        run: |
+          python -m twine check dist/*
+          python - <<'PY'
+          import pathlib, zipfile
+          wheel = next(pathlib.Path("dist").glob("*.whl"))
+          names = zipfile.ZipFile(wheel).namelist()
+          licences = [n for n in names if "licenses/" in n]
+          assert any(n.endswith("/LICENSE") for n in licences), names
+          print(f"{wheel.name}: {len(licences)} licence file(s) packaged")
+          PY
+      - uses: actions/upload-artifact@v4
+        with: { name: distributions, path: dist/ }
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # Mints the short-lived OIDC token PyPI exchanges for upload rights, so
+      # no API token exists to leak, rotate or commit by accident.
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: distributions, path: dist/ }
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Re-tagging a released version should be a no-op, not a red build.
+          # PyPI versions are immutable, so this can never overwrite anything.
+          skip-existing: true

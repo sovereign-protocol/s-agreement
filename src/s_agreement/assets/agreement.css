@@ -14,13 +14,33 @@
   --line: rgba(255, 255, 255, 0.14);
   --text: #ede9e3;
   --text-muted: #a39c8e;
+  --hover: rgba(255, 255, 255, 0.06);
+  --proposal: #60a5fa;
+  --delete: #e08a67;
+}
+
+/* Light theme. The warm ink identity is kept - same hue family, lightened -
+   so Agreement still reads as its own application rather than collapsing
+   into the Cockpit's neutral gray (U2). This is also the palette the old
+   light document page used to sit in, now applied to the whole surface
+   rather than only the article. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page: #f5f2ec;
+  --panel: #ffffff;
+  --line: rgba(0, 0, 0, 0.14);
+  --text: #1f1c17;
+  --text-muted: #6e675c;
+  --hover: rgba(0, 0, 0, 0.05);
+  --proposal: #1d4ed8;
+  --delete: #9a3412;
 }
 body { margin: 0; font: 15px system-ui, sans-serif; background: var(--page); color: var(--text); }
 main { max-width: 850px; margin: auto; padding: 18px 24px; }
 /* Every application separates header from content with a rule; Agreement had
    none, which is why its header read as floating. */
 header {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: 1px solid var(--line);
   padding: 10px 24px;
 }
 article { background: var(--panel); color: var(--text); padding: 32px 48px; border-radius: 8px; }
@@ -73,7 +93,7 @@ h2.element-label { margin: 0 0 4px; }
 
 .element-actions { display: inline-flex; align-items: center; gap: 6px; }
 .proposal-badge {
-  color: #60a5fa;
+  color: var(--proposal);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -106,7 +126,7 @@ h2.element-label { margin: 0 0 4px; }
 .element-delete {
   background: none;
   border: none;
-  color: #e08a67;
+  color: var(--delete);
   opacity: 0;
 }
 .element-move {
@@ -127,5 +147,5 @@ h2.element-label { margin: 0 0 4px; }
 .element-move:focus-visible { opacity: 1; }
 
 .editable { border-radius: 4px; padding: 2px 4px; margin-left: -4px; cursor: text; }
-.editable:hover { background: rgba(255, 255, 255, 0.06); }
-.editable:focus { outline: 2px solid #60a5fa; outline-offset: 1px; background: rgba(255, 255, 255, 0.05); }
+.editable:hover { background: var(--hover); }
+.editable:focus { outline: 2px solid var(--proposal); outline-offset: 1px; background: var(--hover); }

@@ -178,5 +178,37 @@ class AssetTests(unittest.TestCase):
                 self.assertNotIn(pattern, line, f"agreement.html:{number}")
 
 
+class ThemeTests(unittest.TestCase):
+    """U4 was "dark everywhere" with one documented exception: the document
+    surface stayed light, reasoned as paper inside a dark frame. Using the
+    desktop build showed that exception reads as a bug rather than a design,
+    so it is gone - amendment recorded in DESIGN_UI_CONSISTENCY.md alongside
+    U4. These hold the line against it quietly coming back.
+    """
+
+    def setUp(self):
+        self.css = files("s_agreement.assets").joinpath(
+            "agreement.css",
+        ).read_text(encoding="utf-8")
+
+    def test_declares_a_dark_colour_scheme(self):
+        self.assertIn("color-scheme: dark", self.css)
+
+    def test_the_document_panel_is_not_painted_light(self):
+        # The exact former declarations, so a revert is caught even if it
+        # arrives through a different rule. Matched as declarations rather
+        # than a bare substring so the history note in this file's own
+        # opening comment - which names the old colour deliberately - is
+        # not itself a false positive.
+        self.assertNotIn("background: #f9fafb", self.css)
+        self.assertNotIn("background:#f9fafb", self.css)
+
+    def test_text_colours_are_not_the_ones_calibrated_for_a_light_panel(self):
+        # #111827 was the panel's near-black text - unreadable if the panel
+        # underneath it were ever made dark again without also moving this.
+        self.assertNotIn("color: #111827", self.css)
+        self.assertNotIn("color:#111827", self.css)
+
+
 if __name__ == "__main__":
     unittest.main()

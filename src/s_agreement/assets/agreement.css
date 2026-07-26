@@ -1,20 +1,51 @@
-/* Warm dark neutral, per U2 in DESIGN_UI_CONSISTENCY.md. The previous
-   #111827 was almost the Personal Cockpit's #0d1117, so the two applications
-   looked alike. Agreement is the only one with a light page in the middle -
-   the article below is #f9fafb - so a warm frame around white paper reads as
-   a document on a desk, and avoids every reserved colour. */
-:root { color-scheme: dark; }
-body { margin: 0; font: 15px system-ui, sans-serif; background: #1c1a17; color: #ede9e3; }
+/* Warm dark neutral, per U2 in DESIGN_UI_CONSISTENCY.md.
+
+   This used to frame a light #f9fafb article as paper on a desk - a
+   deliberate, documented exception to "dark everywhere" (U4). Overridden:
+   the document itself is now the same warm-dark family as the page, one
+   step lighter, the way S-Kanban's --surface sits one step above --bg.
+   Every colour below was chosen for text/borders on that #f9fafb, so this
+   is a full repaint, not a background swap - a dark-gray label on a
+   dark-gray field is as unreadable as a light one on a light field. */
+:root {
+  color-scheme: dark;
+  --page: #1c1a17;
+  --panel: #262319;
+  --line: rgba(255, 255, 255, 0.14);
+  --text: #ede9e3;
+  --text-muted: #a39c8e;
+  --hover: rgba(255, 255, 255, 0.06);
+  --proposal: #60a5fa;
+  --delete: #e08a67;
+}
+
+/* Light theme. The warm ink identity is kept - same hue family, lightened -
+   so Agreement still reads as its own application rather than collapsing
+   into the Cockpit's neutral gray (U2). This is also the palette the old
+   light document page used to sit in, now applied to the whole surface
+   rather than only the article. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --page: #f5f2ec;
+  --panel: #ffffff;
+  --line: rgba(0, 0, 0, 0.14);
+  --text: #1f1c17;
+  --text-muted: #6e675c;
+  --hover: rgba(0, 0, 0, 0.05);
+  --proposal: #1d4ed8;
+  --delete: #9a3412;
+}
+body { margin: 0; font: 15px system-ui, sans-serif; background: var(--page); color: var(--text); }
 main { max-width: 850px; margin: auto; padding: 18px 24px; }
 /* Every application separates header from content with a rule; Agreement had
    none, which is why its header read as floating. */
 header {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  border-bottom: 1px solid var(--line);
   padding: 10px 24px;
 }
-article { background: #f9fafb; color: #111827; padding: 32px 48px; border-radius: 8px; }
-section { border-top: 1px solid #d1d5db; padding: 6px 0; }
-button, select { padding: 8px 11px; border-radius: 6px; border: 1px solid #4b5563; }
+article { background: var(--panel); color: var(--text); padding: 32px 48px; border-radius: 8px; }
+section { border-top: 1px solid var(--line); padding: 6px 0; }
+button, select { padding: 8px 11px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--text); }
 
 /* One row shape at every level: status on the left with the name, actions on
    the right. Same grid for the agreement, its sections, and its clauses, so
@@ -33,7 +64,9 @@ button, select { padding: 8px 11px; border-radius: 6px; border: 1px solid #4b556
 h2.element-label { margin: 0 0 4px; }
 
 /* The lamp carries the explanation, so hovering the status tells you what is
-   unsettled without opening anything. */
+   unsettled without opening anything. These four are the reserved status
+   colours (U2) and are unchanged by the repaint - they never sat on the
+   page background, only on transparent, so they needed no recalibration. */
 .status-lamp {
   width: 9px;
   height: 9px;
@@ -41,7 +74,7 @@ h2.element-label { margin: 0 0 4px; }
   align-self: center;
   justify-self: center;
   background: transparent;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--line);
   cursor: help;
 }
 .status-lamp[data-status="divergence"] { background: #dc2626; border-color: #dc2626; }
@@ -51,16 +84,16 @@ h2.element-label { margin: 0 0 4px; }
 .status-lamp[data-status="local_made_changes"],
 .status-lamp[data-status="peer_missing_node"] { background: #9ca3af; border-color: #9ca3af; }
 
-.element-row[data-status="divergence"] { background: rgba(220, 38, 38, 0.07); }
-.element-row[data-status="in_transition"] { background: rgba(245, 158, 11, 0.08); }
+.element-row[data-status="divergence"] { background: rgba(220, 38, 38, 0.15); }
+.element-row[data-status="in_transition"] { background: rgba(245, 158, 11, 0.15); }
 .element-row.is-proposed {
-  border: 1px dashed rgba(37, 99, 235, 0.45);
-  background: rgba(37, 99, 235, 0.06);
+  border: 1px dashed rgba(37, 99, 235, 0.55);
+  background: rgba(37, 99, 235, 0.12);
 }
 
 .element-actions { display: inline-flex; align-items: center; gap: 6px; }
 .proposal-badge {
-  color: #1d4ed8;
+  color: var(--proposal);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -74,28 +107,32 @@ h2.element-label { margin: 0 0 4px; }
 }
 .element-add {
   background: none;
-  border: 1px solid #d1d5db;
-  color: #4b5563;
+  border: 1px solid var(--line);
+  color: var(--text-muted);
   opacity: 0;
 }
 /* Reacting is the only way out of a divergence, so it is never hidden behind
-   hover - it simply does not exist while there is nothing to react to. */
+   hover - it simply does not exist while there is nothing to react to.
+   It used to be a dark chip standing out from a light page; on a dark page
+   the same standing-out needs the opposite value, so it borrows the shared
+   teal every application uses for its one emphasized action instead of
+   inventing a second accent colour. */
 .element-react {
-  background: #111827;
-  border: 1px solid #111827;
-  color: #f9fafb;
+  background: var(--teal, #0f7a64);
+  border: 1px solid var(--teal, #0f7a64);
+  color: #ffffff;
   font-weight: 600;
 }
 .element-delete {
   background: none;
   border: none;
-  color: #9a3412;
+  color: var(--delete);
   opacity: 0;
 }
 .element-move {
   background: none;
-  border: 1px solid #d1d5db;
-  color: #4b5563;
+  border: 1px solid var(--line);
+  color: var(--text-muted);
   font-weight: 700;
   line-height: 1;
   padding: 2px 6px;
@@ -110,5 +147,5 @@ h2.element-label { margin: 0 0 4px; }
 .element-move:focus-visible { opacity: 1; }
 
 .editable { border-radius: 4px; padding: 2px 4px; margin-left: -4px; cursor: text; }
-.editable:hover { background: rgba(17, 24, 39, 0.06); }
-.editable:focus { outline: 2px solid #2563eb; outline-offset: 1px; background: #fff; }
+.editable:hover { background: var(--hover); }
+.editable:focus { outline: 2px solid var(--proposal); outline-offset: 1px; background: var(--hover); }

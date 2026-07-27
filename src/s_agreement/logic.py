@@ -41,6 +41,22 @@ class AgreementLogic:
             str(node.data.get("title", "")), node.created_at,
         ))
 
+    def sections(self, agreement: ProtocolNode) -> list[ProtocolNode]:
+        return self._ordered(agreement, "agreement_section")
+
+    def clauses(self, section: ProtocolNode) -> list[ProtocolNode]:
+        return self._ordered(section, "agreement_clause")
+
+    @staticmethod
+    def _ordered(parent: ProtocolNode, node_type: str) -> list[ProtocolNode]:
+        return sorted(
+            [
+                child for child in parent.live_children()
+                if child.data.get("type") == node_type
+            ],
+            key=lambda node: (float(node.data.get("order", 0)), node.created_at),
+        )
+
     def create_agreement(self, title: str) -> SessionResult:
         normalized = str(title or "").strip()
         if not normalized:
@@ -140,6 +156,23 @@ class AgreementLogic:
         data = dict(node.data)
         data[field] = normalized
         return self.session.modify(node.uuid, data, node.weights)
+
+    def delete_agreement(self, agreement_uuid: str) -> SessionResult:
+        # An agreement is a topic, so deleting it also stops sharing it -
+        # otherwise peers keep syncing a document this side no longer has.
+        # There is no "last agreement" to protect: unlike a board, nothing
+        # here creates one on demand, and a host with none is a valid state.
+        agreement = self._node(agreement_uuid, "agreement")
+        if not agreement:
+            return SessionResult("error", reason="agreement not found")
+        release = self.session.end_topic_sharing(agreement.uuid)
+        result = self.session.delete(agreement.uuid)
+        if result.status != "ok":
+            return result
+        result.effects = [*release.effects, *result.effects]
+        remaining = [item for item in self.agreements() if item.uuid != agreement.uuid]
+        self._remember_agreement(remaining[0].uuid if remaining else "")
+        return result
 
     def delete_section(self, section_uuid: str) -> SessionResult:
         # Deleting a section takes its clauses with it. That is safe here

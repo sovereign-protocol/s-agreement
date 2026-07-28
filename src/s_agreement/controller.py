@@ -95,6 +95,12 @@ def build_routes(logic, runtime) -> list[Route]:
             data["item_uuid"], data.get("priority"),
         ))
 
+    async def api_agenda_move(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.move_agenda_item(
+            data["item_uuid"], int(data.get("index", 0)),
+        ))
+
     async def api_react(request: Request):
         data = await request.json()
         reaction = data.get("reaction", "adopt")
@@ -130,6 +136,7 @@ def build_routes(logic, runtime) -> list[Route]:
         Route("/api/agreement/agenda/create", api_agenda_create, methods=["POST"]),
         Route("/api/agreement/agenda/delete", api_agenda_delete, methods=["POST"]),
         Route("/api/agreement/agenda/set_priority", api_agenda_priority, methods=["POST"]),
+        Route("/api/agreement/agenda/move", api_agenda_move, methods=["POST"]),
         Route("/api/agreement/react", api_react, methods=["POST"]),
         Route("/api/agreement/adopt", api_adopt, methods=["POST"]),
     ]

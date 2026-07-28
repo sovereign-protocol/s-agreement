@@ -206,6 +206,24 @@ class AgreementLogicTests(unittest.TestCase):
         self.assertEqual(runtime.logic.move_clause(b, 0).status, "ok")
         self.assertEqual(clause_texts(), ["Clause B", "Clause A"])
 
+    def test_agenda_items_can_be_reordered(self):
+        runtime = self.runtime(9416)
+        agreement_uuid = runtime.logic.create_agreement("Terms").value
+        first = runtime.logic.create_agenda_item(
+            agreement_uuid, "First topic",
+        ).value
+        second = runtime.logic.create_agenda_item(
+            agreement_uuid, "Second topic",
+        ).value
+
+        result = runtime.logic.move_agenda_item(second.uuid, 0)
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(
+            [item.uuid for item in runtime.session.agenda_items(agreement_uuid)],
+            [second.uuid, first.uuid],
+        )
+
     def test_move_rejects_wrong_node_types(self):
         runtime = self.runtime(9415)
         agreement_uuid = runtime.logic.create_agreement("Terms").value

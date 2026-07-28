@@ -58,3 +58,6 @@ class AgreementFacade:
         self, item_uuid: str, priority: str | None,
     ):
         return self._logic.set_agenda_item_priority(item_uuid, priority)
+
+    def move_agenda_item(self, item_uuid: str, index: int):
+        return self._logic.move_agenda_item(item_uuid, index)

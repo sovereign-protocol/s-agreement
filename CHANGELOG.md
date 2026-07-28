@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Agreement agenda items can now be reordered by dragging, like Kanban agenda
+  items, and no longer appear as blank document sections.
 - Expanded facade API v1 with explicit agreement and agenda commands, removed
   its mutable Session escape hatch, and documented query results as snapshots.
 - Application code now uses Session queries and namespaced metadata only.

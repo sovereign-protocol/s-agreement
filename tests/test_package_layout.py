@@ -183,6 +183,13 @@ class AssetTests(unittest.TestCase):
         self.assertNotIn("onCreateTopic", self.agreement)
         self.assertIn("SovereignShell.setTopicSelector", self.agreement)
 
+    def test_agenda_exposes_the_shared_move_route(self):
+        self.assertIn("move: '/api/agreement/agenda/move'", self.agreement)
+        self.assertIn(
+            "displayedChildren(current, 'agreement_section')",
+            self.agreement,
+        )
+
     def test_assets_never_navigate_to_the_bare_root_with_a_query(self):
         # "/" serves whichever application is primary, so a root-relative link
         # lands somewhere that depends on host configuration.

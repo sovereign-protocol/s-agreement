@@ -466,6 +466,11 @@ class AgreementLogic:
             return SessionResult("error", reason="agenda item not found")
         return self.session.set_agenda_item_priority(item_uuid, priority)
 
+    def move_agenda_item(self, item_uuid: str, index: int) -> SessionResult:
+        if not self.owns_node(item_uuid):
+            return SessionResult("error", reason="agenda item not found")
+        return self.session.move_agenda_item(item_uuid, index)
+
     def _metadata(self) -> dict:
         return self.session.application_metadata(AGREEMENT_APPLICATION_ID)
 

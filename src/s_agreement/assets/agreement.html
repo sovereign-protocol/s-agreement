@@ -249,14 +249,16 @@
       .map(entry => entry.node)
       .filter(node => !node.deleted && node.parent_uuid === parentUuid);
 
-    const displayedChildren = (parent, inheritedProposal = false) => {
-      const entries = ordered(parent.children).map(node => ({
-        node, proposed: inheritedProposal,
-      }));
+    const displayedChildren = (parent, nodeType, inheritedProposal = false) => {
+      const entries = ordered(parent.children)
+        .filter(node => node.data.type === nodeType)
+        .map(node => ({node, proposed: inheritedProposal}));
       if (!inheritedProposal) {
         const present = new Set(entries.map(entry => entry.node.uuid));
         for (const node of proposedChildren(parent.uuid)) {
-          if (!present.has(node.uuid)) entries.push({node, proposed: true});
+          if (node.data.type === nodeType && !present.has(node.uuid)) {
+            entries.push({node, proposed: true});
+          }
         }
       }
       return entries
@@ -334,7 +336,7 @@
         },
       }));
 
-      const sections = displayedChildren(current);
+      const sections = displayedChildren(current, 'agreement_section');
       const sectionsHaveProposals = sections.some(entry => entry.proposed);
       sections.forEach(({node: section, proposed}, sIndex) => {
         const block = document.createElement('section');
@@ -374,7 +376,9 @@
           },
         }));
 
-        const clauses = displayedChildren(section, proposed);
+        const clauses = displayedChildren(
+          section, 'agreement_clause', proposed,
+        );
         const clausesHaveProposals = clauses.some(entry => entry.proposed);
         clauses.forEach(({node: clause, proposed: clauseProposed}, cIndex) => {
           block.append(elementRow({
@@ -423,6 +427,7 @@
         create: '/api/agreement/agenda/create',
         delete: '/api/agreement/agenda/delete',
         setPriority: '/api/agreement/agenda/set_priority',
+        move: '/api/agreement/agenda/move',
       },
       // Name a node so the disagreement pane can say which clause or section
       // is unsettled, rather than showing a bare uuid.

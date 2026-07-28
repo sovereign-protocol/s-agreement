@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- An agreement can be deleted (`/api/agreement/agreements/delete`). Deleting
+  one stops sharing it first, so peers are not left syncing a document this
+  side no longer has. Unlike a board there is no last-one guard: nothing
+  creates an agreement on demand, and a host with none is a valid state.
+- The facade exposes an agreement's `sections` and their `clauses`, so
+  Personal Cockpit can show a whole agreement without importing this
+  package.
 - Moved out of the Core repository into its own, where every other
   application already lives.
 - Relicensed from `LGPL-3.0-or-later` to **Apache-2.0**. It carried Core's

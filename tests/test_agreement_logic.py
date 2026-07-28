@@ -411,6 +411,64 @@ class AgreementLogicTests(unittest.TestCase):
                 "Updated through mailbox",
             )
 
+    def test_delete_agreement_removes_the_whole_document(self):
+        runtime = self.runtime(9451)
+        logic: AgreementLogic = runtime.logic
+        agreement_uuid = logic.create_agreement("Working agreement").value
+        section_uuid = logic.create_section(agreement_uuid, "Scope").value
+        clause_uuid = logic.create_clause(section_uuid, "One clause.").value
+
+        result = logic.delete_agreement(agreement_uuid)
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(logic.agreements(), [])
+        for node_uuid in (agreement_uuid, section_uuid, clause_uuid):
+            node = runtime.session.protocol.index.get(node_uuid)
+            self.assertTrue(node is None or node.deleted, node_uuid)
+
+    def test_deleting_the_last_agreement_leaves_none_selected(self):
+        runtime = self.runtime(9452)
+        logic: AgreementLogic = runtime.logic
+        agreement_uuid = logic.create_agreement("Working agreement").value
+
+        logic.delete_agreement(agreement_uuid)
+
+        self.assertIsNone(logic.document_payload()["agreement"])
+
+    def test_delete_agreement_rejects_a_node_that_is_not_one(self):
+        runtime = self.runtime(9453)
+        logic: AgreementLogic = runtime.logic
+        agreement_uuid = logic.create_agreement("Working agreement").value
+        section_uuid = logic.create_section(agreement_uuid, "Scope").value
+
+        result = logic.delete_agreement(section_uuid)
+
+        self.assertEqual(result.status, "error")
+        self.assertEqual(len(logic.agreements()), 1)
+
+    def test_sections_and_clauses_are_returned_in_display_order(self):
+        # Personal Cockpit reads an agreement through these, so the order
+        # they return is the order the document is read in.
+        runtime = self.runtime(9454)
+        logic: AgreementLogic = runtime.logic
+        agreement_uuid = logic.create_agreement("Working agreement").value
+        first = logic.create_section(agreement_uuid, "First").value
+        second = logic.create_section(agreement_uuid, "Second").value
+        logic.create_clause(first, "Clause one.")
+        logic.create_clause(first, "Clause two.")
+        logic.move_section(second, 0)
+
+        agreement = runtime.session.protocol.index[agreement_uuid]
+        sections = logic.sections(agreement)
+
+        self.assertEqual(
+            [node.data["title"] for node in sections], ["Second", "First"],
+        )
+        self.assertEqual(
+            [node.data["text"] for node in logic.clauses(sections[1])],
+            ["Clause one.", "Clause two."],
+        )
+
     @staticmethod
     def relay_config(relay_root: str, identity: str, state_dir: str) -> dict:
         return {

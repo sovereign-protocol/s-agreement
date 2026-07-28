@@ -23,6 +23,12 @@ class AgreementFacade:
     def agreements(self) -> list[ProtocolNode]:
         return self._logic.agreements()
 
+    def sections(self, agreement: ProtocolNode) -> list[ProtocolNode]:
+        return self._logic.sections(agreement)
+
+    def clauses(self, section: ProtocolNode) -> list[ProtocolNode]:
+        return self._logic.clauses(section)
+
     def session(self) -> Session:
         return self._logic.session
 

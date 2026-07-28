@@ -35,7 +35,7 @@ def create_application(services: ApplicationServices) -> ApplicationInstance:
         manifest=APPLICATION_MANIFEST,
         logic=logic,
         registration=logic.application_registration(),
-        controllers=tuple(build_routes(logic, services, dict(services.settings))),
+        controllers=tuple(build_routes(logic, services)),
         facade=ApplicationFacade(
             application_id=APPLICATION_MANIFEST.application_id,
             facade_api_version=AGREEMENT_FACADE_API_VERSION,

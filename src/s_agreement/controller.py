@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
-
-from sovereign import application_result_view, json_value
+from sovereign import application_json_response, json_value
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 
-def build_routes(logic, runtime, config: dict) -> list[Route]:
+def build_routes(logic, runtime) -> list[Route]:
     async def api_document(request: Request):
         requested = request.query_params.get("agreement_uuid")
         return JSONResponse(json_value(logic.document_payload(requested)))
@@ -81,19 +79,19 @@ def build_routes(logic, runtime, config: dict) -> list[Route]:
 
     async def api_agenda_create(request: Request):
         data = await request.json()
-        return await _json_result(runtime, logic.session.create_agenda_item(
+        return await _json_result(runtime, logic.create_agenda_item(
             data["agreement_uuid"], data.get("text", ""), data.get("priority"),
         ))
 
     async def api_agenda_delete(request: Request):
         data = await request.json()
         return await _json_result(
-            runtime, logic.session.delete_agenda_item(data["item_uuid"]),
+            runtime, logic.delete_agenda_item(data["item_uuid"]),
         )
 
     async def api_agenda_priority(request: Request):
         data = await request.json()
-        return await _json_result(runtime, logic.session.set_agenda_item_priority(
+        return await _json_result(runtime, logic.set_agenda_item_priority(
             data["item_uuid"], data.get("priority"),
         ))
 
@@ -138,11 +136,4 @@ def build_routes(logic, runtime, config: dict) -> list[Route]:
 
 
 async def _json_result(runtime, result) -> JSONResponse:
-    deliveries = []
-    if result.status == "ok":
-        deliveries = await asyncio.to_thread(
-            runtime.deliver_effects, result.effects,
-        )
-        runtime.notify_change()
-    view = application_result_view(result, deliveries)
-    return JSONResponse(view.payload, status_code=200 if view.ok else 409)
+    return await application_json_response(runtime, result)

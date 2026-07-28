@@ -216,46 +216,44 @@ class AgreementLogic:
     # it. Both primitives are Session's; this application only names which
     # node types may be reacted to.
     REACTABLE = frozenset({"agreement", "agreement_section", "agreement_clause"})
+    OWNED_NODE_TYPES = frozenset({*REACTABLE, "agenda_item"})
 
     def accept_peer_node(self, source_addr: str, node_uuid: str,
                          adopt_absence: bool = False) -> SessionResult:
-        if not self._reactable(node_uuid):
+        local_exists = node_uuid in self.session.protocol.index
+        if ((local_exists and not self.owns_node(node_uuid))
+                or (not adopt_absence
+                    and not self.owns_node(node_uuid, source_addr))):
             return SessionResult("error", reason="node is not part of an agreement")
         return self.session.accept_peer_node(source_addr, node_uuid, adopt_absence)
 
     def rollback_peer_node(self, source_addr: str, node_uuid: str,
                            rollback_absence: bool = False) -> SessionResult:
-        if not self._reactable(node_uuid):
+        if (not self.owns_node(node_uuid)
+                or (not rollback_absence
+                    and not self.owns_node(node_uuid, source_addr))):
             return SessionResult("error", reason="node is not part of an agreement")
         return self.session.rollback_peer_node(
             source_addr, node_uuid, rollback_absence,
         )
 
-    def _reactable(self, node_uuid: str) -> bool:
-        # A node absent locally is exactly the case worth reacting to - the
-        # peer has something this side does not - so absence is permitted and
-        # only a present node of a foreign type is refused.
-        node = self.session.protocol.index.get(node_uuid)
-        return node is None or node.data.get("type") in self.REACTABLE
-
     def adopt_peer_changes(self, source_addr: str,
                            agreement_uuid: str) -> SessionResult:
-        if not self._node(agreement_uuid, "agreement"):
+        if (
+            not self._node(agreement_uuid, "agreement")
+            or not self.owns_node(agreement_uuid, source_addr)
+        ):
             return SessionResult("error", reason="agreement not found")
         changed = self.session.reconcile_peer_changes(
             source_addr, agreement_uuid,
         )
-        return SessionResult(
-            "ok",
-            value=changed,
-            effects=self.session.sync_effects(agreement_uuid) if changed else [],
-        )
+        return SessionResult("ok", value=changed)
 
     def transition_events(
         self, agreement_uuid: str, network: dict | None = None,
     ) -> list[dict]:
         events: list[dict] = []
-        for address in sorted(self.session.peer_perspectives):
+        for address in self.session.peer_addresses():
             if not self.session.peer_discusses_node(address, agreement_uuid):
                 continue
             peer_info = ((network or {}).get("peers") or {}).get(address) or {}
@@ -293,7 +291,7 @@ class AgreementLogic:
             "agreement": selected.to_dict() if selected else None,
             "agreements": [node.to_dict() for node in agreements],
             "transition_events": events,
-            "transition_by_node": self._transition_by_node(events),
+            "transition_by_node": self.transition_by_node(events),
             # Agreement changes are proposals until explicitly accepted.
             # Expose only the peer-only agreement nodes needed to present
             # those proposals; the application does not receive or manage
@@ -347,7 +345,7 @@ class AgreementLogic:
             return agreements[0]
         return None
 
-    def _transition_by_node(self, events: list[dict]) -> dict:
+    def transition_by_node(self, events: list[dict]) -> dict:
         priority = Session.TRANSITION_PRIORITY
         grouped: dict[str, dict] = {}
         for event in events:
@@ -365,6 +363,21 @@ class AgreementLogic:
                 )
         return grouped
 
+    def collaboration_context(self, topic_uuid: str) -> dict:
+        agreement = self._node(topic_uuid, "agreement")
+        if not agreement:
+            return {}
+        events = self.transition_events(topic_uuid)
+        return {
+            "agenda_items": [
+                item.to_dict() for item in self.session.agenda_items(topic_uuid)
+            ],
+            "transition_events": events,
+            "transition_by_node": self.transition_by_node(events),
+            "identity_uuid": self.session.identity.uuid,
+            "known_identities": self.session.known_identities(),
+        }
+
     def _network_info(self, topic_uuid: str | None) -> dict:
         if self.collaboration:
             return self.collaboration.network_info(topic_uuid)
@@ -373,11 +386,88 @@ class AgreementLogic:
     def _node(self, node_uuid: str | None,
               node_type: str) -> ProtocolNode | None:
         node = self.session.protocol.index.get(node_uuid) if node_uuid else None
-        return node if node and node.data.get("type") == node_type else None
+        return (
+            node
+            if (
+                node
+                and node.data.get("type") == node_type
+                and self.owns_node(node_uuid)
+            )
+            else None
+        )
+
+    def owns_node(self, node_uuid: str, peer_addr: str | None = None) -> bool:
+        """Whether one side's node belongs to an Agreement topic and schema."""
+        if peer_addr is not None:
+            node = self.session.get_cached_peer_subtree(peer_addr, node_uuid)
+            if not node or node.data.get("type") not in self.OWNED_NODE_TYPES:
+                return False
+            topic_uuids = set(
+                self.session.peer_topics_for_node(peer_addr, node_uuid),
+            )
+            if local_topic := self._local_agreement_topic(node_uuid):
+                topic_uuids.add(local_topic.uuid)
+            return any(
+                (topic := self.session.get_cached_peer_subtree(peer_addr, topic_uuid))
+                and topic.data.get("type") == "agreement"
+                and self._subtree_contains(topic, node_uuid)
+                for topic_uuid in topic_uuids
+            )
+
+        node = self.session.protocol.index.get(node_uuid)
+        if not node or node.data.get("type") not in self.OWNED_NODE_TYPES:
+            return False
+        return self._local_agreement_topic(node_uuid) is not None
+
+    def _local_agreement_topic(self, node_uuid: str) -> ProtocolNode | None:
+        node = self.session.protocol.index.get(node_uuid)
+        if not node:
+            return None
+        seen = set()
+        current = node
+        while current and current.uuid not in seen:
+            seen.add(current.uuid)
+            if current.data.get("type") == "agreement":
+                parent = self.session.protocol.index.get(current.parent_uuid)
+                return current if (
+                    parent
+                    and parent.data.get("type") == "agreement_app"
+                    and parent.data.get("name") == AGREEMENT_APP_NAME
+                ) else None
+            current = self.session.protocol.index.get(current.parent_uuid)
+        return None
+
+    @staticmethod
+    def _subtree_contains(root: ProtocolNode, node_uuid: str) -> bool:
+        return root.uuid == node_uuid or any(
+            AgreementLogic._subtree_contains(child, node_uuid)
+            for child in root.children
+        )
+
+    def create_agenda_item(
+        self, agreement_uuid: str, text: str, priority: str | None = None,
+    ) -> SessionResult:
+        agreement = self._node(agreement_uuid, "agreement")
+        if not agreement:
+            return SessionResult("error", reason="agreement not found")
+        return self.session.create_agenda_item(
+            agreement.uuid, text, priority,
+        )
+
+    def delete_agenda_item(self, item_uuid: str) -> SessionResult:
+        if not self.owns_node(item_uuid):
+            return SessionResult("error", reason="agenda item not found")
+        return self.session.delete_agenda_item(item_uuid)
+
+    def set_agenda_item_priority(
+        self, item_uuid: str, priority: str | None,
+    ) -> SessionResult:
+        if not self.owns_node(item_uuid):
+            return SessionResult("error", reason="agenda item not found")
+        return self.session.set_agenda_item_priority(item_uuid, priority)
 
     def _metadata(self) -> dict:
-        apps = self.session.app_metadata.setdefault("apps", {})
-        return apps.setdefault(AGREEMENT_APPLICATION_ID, {})
+        return self.session.application_metadata(AGREEMENT_APPLICATION_ID)
 
     def _remember_agreement(self, agreement_uuid: str) -> None:
         self._metadata()["selected_agreement_uuid"] = agreement_uuid
@@ -399,9 +489,3 @@ class AgreementLogic:
         return self.session.create_child(
             parent.uuid, {"type": node_type, "name": name}, {},
         ).value
-
-
-def create_logic(session: Session, config: dict) -> AgreementLogic:
-    logic = AgreementLogic(session, config)
-    session.register_application(logic.application_registration())
-    return logic

@@ -10,41 +10,44 @@ from sovereign import app_server
 from sovereign.relay_logic import RelayLogic
 
 
-class MemoryHttpClient:
-    def __init__(self, runtimes):
-        self.runtimes = runtimes
+def connect(host, guest, topic_uuid: str) -> dict:
+    """Wire two runtimes the way the app does: the host decides to use its
+    relay for the agreement, composes an invitation, the guest accepts it."""
+    host.session.start_discussion(topic_uuid)
+    attached = host.mailbox_channel.attach_topics(
+        [topic_uuid], {"target_id": host.relay_target},
+    )
+    if not attached.ok:
+        return {"status": "error", "reason": attached.reason}
+    identity_uuid = host.session.identity.uuid
+    token = host.channel_manager.compose_token([topic_uuid], {
+        topic_uuid: {
+            "kind": "mailbox", "target_id": host.relay_target,
+        },
+        identity_uuid: {
+            "kind": "mailbox", "target_id": host.relay_target,
+        },
+    })
+    if not token.ok:
+        return {"status": "error", "reason": token.reason}
+    result = guest.channel_manager.accept_token(token.value)
+    if not result.ok:
+        return {"status": "error", "reason": result.reason}
+    sync(host, guest)
+    return result.value
 
-    def get_json(self, url: str, timeout: float = 5) -> dict:
-        runtime, path = self._split(url)
-        if path.startswith("/p2p/subtree/"):
-            payload, status = runtime.adapter.p2p_subtree(path.rsplit("/", 1)[1])
-            if status != 200:
-                raise RuntimeError(payload.get("reason", "not found"))
-            return payload
-        raise RuntimeError(f"unexpected GET {path}")
 
-    def post_json(self, url: str, payload: dict,
-                  timeout: float = 5) -> dict:
-        runtime, path = self._split(url)
-        handlers = {
-            "/p2p/join": runtime.adapter.p2p_join,
-            "/p2p/sync_status": runtime.adapter.p2p_sync_status,
-            "/p2p/announce": runtime.adapter.p2p_announce,
-            "/p2p/leave": runtime.adapter.p2p_leave,
-        }
-        handler = handlers.get(path)
-        if not handler:
-            raise RuntimeError(f"unexpected POST {path}")
-        response, status = handler(payload)
-        if status != 200:
-            raise RuntimeError(response.get("reason", "request failed"))
-        return response
-
-    def _split(self, url: str):
-        for address in sorted(self.runtimes, key=len, reverse=True):
-            if url.startswith(address):
-                return self.runtimes[address], url[len(address):]
-        raise RuntimeError(f"unknown address in {url}")
+def sync(*runtimes) -> None:
+    """Move work between clients the only way a relay can: each publishes
+    what changed, then each reads what the others left. Twice, because a
+    client given a topic in the first round has nothing of its own to
+    publish until it has grafted it."""
+    for _ in range(2):
+        for runtime in runtimes:
+            runtime.relay.write_presence()
+            runtime.relay.publish_due_topics()
+        for runtime in runtimes:
+            runtime.relay.poll_and_apply()
 
 
 class AgreementLogicTests(unittest.TestCase):
@@ -73,23 +76,15 @@ class AgreementLogicTests(unittest.TestCase):
         # two sides edit the same clause, both see divergence, and nothing
         # either does resolves it. This is that dead end, and its exit.
         left, right = self.runtime(9410), self.runtime(9411)
-        client = MemoryHttpClient({left.address: left, right.address: right})
-        left.adapter.http = client
-        right.adapter.http = client
         agreement_uuid = left.logic.create_agreement("Service terms").value
         section_uuid = left.logic.create_section(agreement_uuid, "Scope").value
         clause_uuid = left.logic.create_clause(section_uuid, "Original text.").value
-        left.session.start_discussion(agreement_uuid)
-        right.channel_manager.accept_invitation(
-            left.session.identity.to_dict(),
-            [agreement_uuid],
-            [{"type": "http", "descriptor_version": 1, "address": left.address}],
-        )
+        connect(left, right, agreement_uuid)
 
         # Both sides rewrite the same clause without seeing the other's edit.
-        changed = left.logic.update_clause(clause_uuid, "Left text.")
+        left.logic.update_clause(clause_uuid, "Left text.")
         right.logic.update_clause(clause_uuid, "Right text.")
-        left.channel_manager.execute_effects(changed.effects)
+        sync(left, right)
         grouped = right.logic.document_payload(agreement_uuid)["transition_by_node"]
         self.assertEqual(grouped[clause_uuid]["type"], "divergence")
         self.assertIn(grouped[clause_uuid]["reaction"], {"adopt", "rollback"})
@@ -97,7 +92,7 @@ class AgreementLogicTests(unittest.TestCase):
         # Reacting with adopt takes the peer's revision and leaves the
         # divergence behind - the exit that did not exist before.
         self.assertEqual(
-            right.logic.accept_peer_node(left.address, clause_uuid).status, "ok",
+            right.logic.accept_peer_node(left.peer_addr, clause_uuid).status, "ok",
         )
         self.assertEqual(
             right.session.protocol.index[clause_uuid].data["text"], "Left text.",
@@ -270,31 +265,19 @@ class AgreementLogicTests(unittest.TestCase):
         paths = {route.path for route in app_server.build_app(runtime).routes}
         self.assertNotIn("/api/agreement/auto_adopt", paths)
 
-    def test_direct_http_invitation_and_transition_visibility(self):
+    def test_invitation_and_transition_visibility(self):
         left = self.runtime(9402)
         right = self.runtime(9403)
-        client = MemoryHttpClient({left.address: left, right.address: right})
-        left.adapter.http = client
-        right.adapter.http = client
         agreement_uuid = left.logic.create_agreement("Shared agreement").value
         section_uuid = left.logic.create_section(agreement_uuid, "Scope").value
         clause_uuid = left.logic.create_clause(section_uuid, "Initial text").value
-        left.session.start_discussion(agreement_uuid)
 
-        accepted = right.channel_manager.accept_invitation(
-            left.session.identity.to_dict(),
-            [agreement_uuid],
-            [{
-                "type": "http",
-                "descriptor_version": 1,
-                "address": left.address,
-            }],
-        )
+        accepted = connect(left, right, agreement_uuid)
 
-        self.assertTrue(accepted.ok, accepted.reason)
+        self.assertEqual(accepted["status"], "ok")
         self.assertIn(agreement_uuid, [item.uuid for item in right.logic.agreements()])
-        changed = left.logic.update_clause(clause_uuid, "Proposed replacement")
-        left.channel_manager.execute_effects(changed.effects)
+        left.logic.update_clause(clause_uuid, "Proposed replacement")
+        sync(left, right)
         events = right.logic.transition_events(agreement_uuid)
         clause_events = [event for event in events if event["node_uuid"] == clause_uuid]
         self.assertEqual(len(clause_events), 1)
@@ -303,28 +286,13 @@ class AgreementLogicTests(unittest.TestCase):
     def test_three_level_new_structure_adopts_in_one_pass_child_first(self):
         left = self.runtime(9404)
         right = self.runtime(9405)
-        client = MemoryHttpClient({left.address: left, right.address: right})
-        left.adapter.http = client
-        right.adapter.http = client
         agreement_uuid = left.logic.create_agreement("Nested agreement").value
-        left.session.start_discussion(agreement_uuid)
-        accepted = right.channel_manager.accept_invitation(
-            left.session.identity.to_dict(),
-            [agreement_uuid],
-            [{
-                "type": "http",
-                "descriptor_version": 1,
-                "address": left.address,
-            }],
-        )
-        self.assertTrue(accepted.ok, accepted.reason)
+        accepted = connect(left, right, agreement_uuid)
+        self.assertEqual(accepted["status"], "ok")
 
-        section = left.logic.create_section(agreement_uuid, "New section")
-        section_uuid = section.value
-        left.channel_manager.execute_effects(section.effects)
-        clause = left.logic.create_clause(section_uuid, "Nested clause")
-        clause_uuid = clause.value
-        left.channel_manager.execute_effects(clause.effects)
+        section_uuid = left.logic.create_section(agreement_uuid, "New section").value
+        clause_uuid = left.logic.create_clause(section_uuid, "Nested clause").value
+        sync(left, right)
         proposals = {
             entry["node"]["uuid"]: entry
             for entry in right.logic.document_payload(
@@ -337,7 +305,7 @@ class AgreementLogicTests(unittest.TestCase):
             proposals[section_uuid]["node"]["data"]["title"], "New section",
         )
         events = right.session.analyze_peer_transitions(
-            left.address, agreement_uuid,
+            left.peer_addr, agreement_uuid,
         )
         incoming = [
             event for event in events
@@ -351,7 +319,7 @@ class AgreementLogicTests(unittest.TestCase):
             right.session, "analyze_peer_transitions", return_value=child_first,
         ):
             adopted = right.logic.adopt_peer_changes(
-                left.address, agreement_uuid,
+                left.peer_addr, agreement_uuid,
             )
 
         self.assertEqual(adopted.status, "ok")
@@ -477,9 +445,18 @@ class AgreementLogicTests(unittest.TestCase):
             "relay_state_file": str(Path(state_dir) / f"state-{identity}.json"),
         }
 
-    @staticmethod
-    def runtime(port: int):
+    def relay_root(self) -> str:
+        """One folder for every client in a test. A client never polls a
+        topic it was not given, so sharing the folder shares nothing."""
+        if not getattr(self, "_relay_root", None):
+            directory = tempfile.TemporaryDirectory()
+            self.addCleanup(directory.cleanup)
+            self._relay_root = directory.name
+        return self._relay_root
+
+    def runtime(self, port: int):
         directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
         config = app_server.load_config(None, "agreement", {
             "agreement": {
                 "app_module": "s_agreement.application",
@@ -490,8 +467,19 @@ class AgreementLogicTests(unittest.TestCase):
             },
         })
         config["storage_file"] = str(Path(directory.name) / f"{port}.json")
+        config["relay_state_directory"] = str(Path(directory.name) / "relay")
         runtime = app_server.create_runtime(port, config)
         runtime._test_tmp = directory
+        created = runtime.relay_manager.create_target({
+            "name": f"relay {port}", "backend": "local", "root": self.relay_root(),
+        })
+        if created.status != "ok":
+            raise RuntimeError(created.reason)
+        runtime.relay_target = created.value
+        runtime.relay = runtime.relay_manager.connection_for_target(created.value)
+        # How the other client's registries name this one: a relay peer is a
+        # publication identity, not an address anybody can reach.
+        runtime.peer_addr = f"relay:{runtime.relay.identity}"
         return runtime
 
 

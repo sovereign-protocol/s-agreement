@@ -113,6 +113,19 @@ class BoundaryTests(unittest.TestCase):
             self.assertNotIn('config.get("_relay_manager")', source, str(path))
             self.assertNotIn("channel_manager", source, str(path))
 
+    def test_does_not_read_mutable_session_registries(self):
+        forbidden = {
+            "peer_topic_sets", "peer_perspectives", "peer_identity_key",
+            "active_topic_uuids", "app_metadata",
+        }
+        for path in SOURCES:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            used = {
+                node.attr for node in ast.walk(tree)
+                if isinstance(node, ast.Attribute)
+            }
+            self.assertFalse(used & forbidden, str(path))
+
     def test_reads_the_transition_ranking_rather_than_copying_it(self):
         # Kanban and Agreement had each copied Session's ranking and the
         # copies drifted: one ranked divergence 6, the other 5, so the same

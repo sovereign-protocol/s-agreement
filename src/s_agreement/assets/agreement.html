@@ -28,17 +28,10 @@
       </menu>
     </form>
   </dialog>
+  <script src="/shared-api.js"></script>
   <script src="/shared.js"></script>
   <script>
-    const api = async (path, body) => {
-      const response = await fetch(path, body ? {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body)
-      } : {});
-      const value = await response.json();
-      if (!response.ok) throw new Error(value.reason || 'Request failed');
-      return value;
-    };
+    const api = SovereignApi.request;
     let current = null;
     let payloadState = {};
     const nodeStatus = (payload, uuid) => payload.transition_by_node[uuid]?.type;

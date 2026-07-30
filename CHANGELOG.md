@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0a2 - 2026-07-30
 
 - Require Sovereign Core 0.1.5 for composite application responses.
 - `/api/agreement/document` now uses Core's atomic

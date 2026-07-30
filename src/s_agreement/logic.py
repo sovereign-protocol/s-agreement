@@ -7,6 +7,8 @@ intentionally outside this R7 conformance application.
 
 from __future__ import annotations
 
+import copy
+
 from sovereign import ApplicationRegistration, ProtocolNode, Session, SessionResult
 
 
@@ -21,6 +23,8 @@ class AgreementLogic:
         self.config = config or {}
         self.collaboration = collaboration
         self.session.identity
+        with self.session.lock:
+            self.session.application_metadata(AGREEMENT_APPLICATION_ID)
 
     def application_registration(self) -> ApplicationRegistration:
         return ApplicationRegistration(
@@ -33,8 +37,11 @@ class AgreementLogic:
         )
 
     def agreements(self) -> list[ProtocolNode]:
+        container = self._find_agreement_container()
+        if not container:
+            return []
         found = [
-            child for child in self._agreement_container().live_children()
+            child for child in container.live_children()
             if child.data.get("type") == "agreement"
         ]
         return sorted(found, key=lambda node: (
@@ -258,7 +265,7 @@ class AgreementLogic:
                 continue
             peer_info = ((network or {}).get("peers") or {}).get(address) or {}
             liveness = peer_info.get("channel_liveness")
-            if liveness is None:
+            if liveness is None and network is None:
                 resolver = getattr(
                     self.collaboration, "peer_liveness_for_address", None,
                 )
@@ -279,10 +286,16 @@ class AgreementLogic:
             )
         return events
 
-    def document_payload(self, agreement_uuid: str | None = None) -> dict:
+    def document_payload(
+        self, agreement_uuid: str | None = None,
+        network: dict | None = None,
+    ) -> dict:
         agreements = self.agreements()
         selected = self._selected_agreement(agreement_uuid, agreements)
-        network = self._network_info(selected.uuid if selected else None)
+        network = (
+            self._network_info(selected.uuid if selected else None)
+            if network is None else network
+        )
         events = (
             self.transition_events(selected.uuid, network) if selected else []
         )
@@ -307,6 +320,59 @@ class AgreementLogic:
             "identity_uuid": self.session.identity.uuid,
             "known_identities": self.session.known_identities(),
         }
+
+    def document_snapshot(
+        self, agreement_uuid: str | None = None,
+    ) -> dict:
+        """Build agreement state under Session without consulting transport."""
+        payload = self.document_payload(agreement_uuid, {})
+        decorated = []
+        for event in payload.get("transition_events", []):
+            node_uuid = event.get("node_uuid")
+            view = self.transition_by_node([event]).get(node_uuid)
+            if view:
+                decorated.append((event, view))
+        agreement = payload.get("agreement") or {}
+        return {
+            "payload": payload,
+            "topic_uuid": agreement.get("uuid"),
+            "transition_views": decorated,
+        }
+
+    @classmethod
+    def merge_document_observation(
+        cls, snapshot: dict, network: dict,
+    ) -> dict:
+        """Decorate a detached agreement snapshot with channel liveness."""
+        payload = snapshot["payload"]
+        visible_events = []
+        grouped = {}
+        for event, view in snapshot.get("transition_views", []):
+            if not cls._transition_visible(event, network):
+                continue
+            visible_events.append(event)
+            node_uuid = event.get("node_uuid")
+            current = grouped.get(node_uuid)
+            if (
+                current is None
+                or Session.TRANSITION_PRIORITY.get(event.get("type"), 0)
+                > Session.TRANSITION_PRIORITY.get(current.get("type"), 0)
+            ):
+                grouped[node_uuid] = view
+        payload["network"] = network
+        payload["transition_events"] = visible_events
+        payload["transition_by_node"] = grouped
+        return payload
+
+    @staticmethod
+    def _transition_visible(event: dict, network: dict) -> bool:
+        if event.get("type") != "in_transition":
+            return True
+        peer = ((network.get("peers") or {}).get(
+            event.get("peer_addr"),
+        ) or {})
+        state = (peer.get("channel_liveness") or {}).get("state", "unknown")
+        return state != "stale"
 
     def _proposed_nodes(self, events: list[dict]) -> list[dict]:
         proposals: list[dict] = []
@@ -341,7 +407,6 @@ class AgreementLogic:
         if selected:
             return selected
         if agreements:
-            self._remember_agreement(agreements[0].uuid)
             return agreements[0]
         return None
 
@@ -363,11 +428,13 @@ class AgreementLogic:
                 )
         return grouped
 
-    def collaboration_context(self, topic_uuid: str) -> dict:
+    def collaboration_context(
+        self, topic_uuid: str, network: dict | None = None,
+    ) -> dict:
         agreement = self._node(topic_uuid, "agreement")
         if not agreement:
             return {}
-        events = self.transition_events(topic_uuid)
+        events = self.transition_events(topic_uuid, network)
         return {
             "agenda_items": [
                 item.to_dict() for item in self.session.agenda_items(topic_uuid)
@@ -472,14 +539,46 @@ class AgreementLogic:
         return self.session.move_agenda_item(item_uuid, index)
 
     def _metadata(self) -> dict:
-        return self.session.application_metadata(AGREEMENT_APPLICATION_ID)
+        """Return a detached read copy of this application's metadata.
+
+        Session hands out the live namespace only to a caller holding its
+        lock, so readers snapshot it and writers open their own transaction.
+        """
+        with self.session.lock:
+            return copy.deepcopy(
+                self.session.application_metadata(AGREEMENT_APPLICATION_ID),
+            )
 
     def _remember_agreement(self, agreement_uuid: str) -> None:
-        self._metadata()["selected_agreement_uuid"] = agreement_uuid
+        with self.session.lock:
+            metadata = self.session.application_metadata(
+                AGREEMENT_APPLICATION_ID,
+            )
+            metadata["selected_agreement_uuid"] = agreement_uuid
 
     def _agreement_container(self) -> ProtocolNode:
         return self._folder(
             self._apps_folder(), AGREEMENT_APP_NAME, "agreement_app",
+        )
+
+    def _find_agreement_container(self) -> ProtocolNode | None:
+        apps = next(
+            (
+                child for child in self.session.protocol.root.live_children()
+                if child.data.get("type") == "folder"
+                and child.data.get("name") == "apps"
+            ),
+            None,
+        )
+        if not apps:
+            return None
+        return next(
+            (
+                child for child in apps.live_children()
+                if child.data.get("type") == "agreement_app"
+                and child.data.get("name") == AGREEMENT_APP_NAME
+            ),
+            None,
         )
 
     def _apps_folder(self) -> ProtocolNode:

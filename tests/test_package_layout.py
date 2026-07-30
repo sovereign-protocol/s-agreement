@@ -164,6 +164,14 @@ class BoundaryTests(unittest.TestCase):
             for node in ast.walk(tree)
         ), str(path))
 
+    def test_document_get_uses_the_composite_snapshot_boundary(self):
+        source = (
+            ROOT / "src" / "s_agreement" / "controller.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("runtime.composite_response(", source)
+        self.assertIn("logic.document_snapshot", source)
+        self.assertIn("logic.merge_document_observation", source)
+
 
 class AssetTests(unittest.TestCase):
     def setUp(self):

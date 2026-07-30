@@ -51,6 +51,41 @@ def sync(*runtimes) -> None:
 
 
 class AgreementLogicTests(unittest.TestCase):
+    def test_document_snapshot_never_consults_transport_under_session(self):
+        class NoTransport:
+            def network_info(self, _topic_uuid=None):
+                raise AssertionError("transport reached from Session snapshot")
+
+            def peer_liveness_for_address(self, _peer, _topic_uuid=None):
+                raise AssertionError("transport reached from Session snapshot")
+
+        session = Session("local")
+        logic = AgreementLogic(session, collaboration=NoTransport())
+        agreement_uuid = logic.create_agreement("Atomic view").value
+
+        with session.lock:
+            snapshot = logic.document_snapshot(agreement_uuid)
+
+        payload = logic.merge_document_observation(snapshot, {"peers": {}})
+        self.assertEqual(snapshot["topic_uuid"], agreement_uuid)
+        self.assertEqual(payload["network"], {"peers": {}})
+
+    def test_document_payload_does_not_change_implicit_selection(self):
+        runtime = self.runtime(8610)
+        created = runtime.logic.create_agreement("Read only")
+        with runtime.session.lock:
+            metadata = runtime.session.application_metadata("agreement")
+            metadata.pop("selected_agreement_uuid", None)
+
+        payload = runtime.logic.document_payload()
+
+        self.assertEqual(payload["agreement"]["uuid"], created.value)
+        with runtime.session.lock:
+            self.assertNotIn(
+                "selected_agreement_uuid",
+                runtime.session.application_metadata("agreement"),
+            )
+
     def test_manifest_and_minimal_document_tree(self):
         runtime = self.runtime(9401)
 

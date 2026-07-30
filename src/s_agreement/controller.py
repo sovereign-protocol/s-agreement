@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sovereign import application_json_response, json_value
+from sovereign import application_json_response
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -11,7 +11,13 @@ from starlette.routing import Route
 def build_routes(logic, runtime) -> list[Route]:
     async def api_document(request: Request):
         requested = request.query_params.get("agreement_uuid")
-        return JSONResponse(json_value(logic.document_payload(requested)))
+        return runtime.composite_response(
+            lambda: logic.document_snapshot(requested),
+            lambda snapshot: runtime.collaboration.network_info(
+                snapshot.get("topic_uuid"),
+            ),
+            logic.merge_document_observation,
+        )
 
     async def api_create_agreement(request: Request):
         data = await request.json()

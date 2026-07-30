@@ -29,14 +29,18 @@ class AgreementFacade:
     def clauses(self, section: ProtocolNode) -> list[ProtocolNode]:
         return self._logic.clauses(section)
 
-    def transition_events(self, agreement_uuid: str) -> list[dict]:
-        return self._logic.transition_events(agreement_uuid)
+    def transition_events(
+        self, agreement_uuid: str, network: dict | None = None,
+    ) -> list[dict]:
+        return self._logic.transition_events(agreement_uuid, network)
 
     def transition_by_node(self, events: list[dict]) -> dict:
         return self._logic.transition_by_node(events)
 
-    def collaboration_context(self, topic_uuid: str) -> dict:
-        return self._logic.collaboration_context(topic_uuid)
+    def collaboration_context(
+        self, topic_uuid: str, network: dict | None = None,
+    ) -> dict:
+        return self._logic.collaboration_context(topic_uuid, network)
 
     def create_agreement(self, title: str):
         return self._logic.create_agreement(title)

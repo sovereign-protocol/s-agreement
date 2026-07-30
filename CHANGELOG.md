@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Require Sovereign Core 0.1.5 for composite application responses.
+- `/api/agreement/document` now uses Core's atomic
+  snapshot-observe-merge boundary, so a relay poll cannot tear one response.
+- Agreement selection metadata is now read as a snapshot and written in
+  one Session transaction, matching Core 0.1.5's locked metadata contract.
 - Agreement agenda items can now be reordered by dragging, like Kanban agenda
   items, and no longer appear as blank document sections.
 - Expanded facade API v1 with explicit agreement and agenda commands, removed

@@ -18,7 +18,7 @@
       <div id="organizationTree"></div>
       <p class="consent-note">
         Joining a parent does not join its subagreements; it makes them
-        available. Every parent must be accepted first.
+        available. A role must be held in every parent first.
       </p>
     </aside>
     <div class="document-pane">
@@ -350,137 +350,125 @@
       }
     };
 
-    const renderAcceptances = (
-      acceptances, interactive, refusalConsequences,
-    ) => {
+    // Who is here, and what they hold. My own line comes first and is the
+    // only one that acts: a badge is taken or stepped out of by clicking it.
+    // Everybody else's badges are a statement of where they stand, not a
+    // control over them.
+    const ACTOR_MARK = {individual: '\u{1F464}', agreement: '\u{1F465}'};
+
+    const renderParticipants = (participants, identity, interactive) => {
       const section = document.createElement('section');
       section.className = 'acceptance-panel';
       const heading = document.createElement('div');
       heading.className = 'acceptance-heading';
       const title = document.createElement('h3');
-      title.textContent = 'Acceptance';
+      title.textContent = 'Participants';
       const reference = document.createElement('p');
-      reference.textContent = 'Each decision is bound to this version of the agreement.';
+      reference.textContent =
+        'Each role is accepted against a version of this agreement.';
       heading.append(title, reference);
       section.append(heading);
 
-      const badges = document.createElement('div');
-      badges.className = 'acceptance-badges';
-      const statusLabels = {
-        accepted: 'Accepted',
-        refused: 'Refused',
-        pending: 'No decision',
-        expired: 'Expired',
-        outdated: 'Needs renewal',
-      };
-      for (const item of acceptances || []) {
-        const badge = document.createElement('div');
-        badge.className = 'acceptance-badge';
-        badge.dataset.status = item.status;
-        if (item.picture) {
-          const avatar = document.createElement('img');
-          avatar.className = 'acceptance-avatar';
-          avatar.src = item.picture;
-          avatar.alt = '';
-          badge.append(avatar);
-        } else {
-          const avatar = document.createElement('span');
-          avatar.className = 'acceptance-avatar acceptance-initials';
-          avatar.textContent = (item.name || '?').trim().slice(0, 1).toUpperCase();
-          badge.append(avatar);
+      const avatarFor = (person) => {
+        if (person.picture) {
+          const image = document.createElement('img');
+          image.className = 'acceptance-avatar';
+          image.src = person.picture;
+          image.alt = '';
+          return image;
         }
+        const mark = document.createElement('span');
+        mark.className = 'acceptance-avatar acceptance-initials';
+        mark.dataset.kind = person.actor_kind || 'individual';
+        mark.textContent = person.actor_kind === 'agreement'
+          ? ACTOR_MARK.agreement
+          : (person.name || '?').trim().slice(0, 1).toUpperCase();
+        return mark;
+      };
+
+      // Identity is a role like any other here, drawn with a key so it can
+      // be told apart at a glance.
+      const badgesFor = (person) => {
+        const badges = [];
+        if (identity?.state === 'held'
+            && identity.holder_actor_uuid === person.uuid) {
+          badges.push({name: 'Identity', status: 'accepted', identity: true});
+        }
+        return badges.concat(person.roles || []);
+      };
+
+      const badgeElement = (role, actionable) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'role-chip';
+        chip.dataset.status = role.status;
+        if (role.identity) chip.dataset.identity = 'true';
+        chip.textContent = role.identity ? `\u{1F511} ${role.name}` : role.name;
+        const label = HOLDER_STATUS[role.status] || role.status;
+        if (!actionable || role.identity) {
+          chip.disabled = true;
+          chip.title = `${role.name} \u2014 ${label}`;
+          return chip;
+        }
+        const held = role.status === 'accepted';
+        chip.title = held
+          ? `${role.name} \u2014 ${label}. Click to step out.`
+          : `${role.name} \u2014 ${label}. Click to take it.`;
+        chip.onclick = async () => {
+          chip.disabled = true;
+          try {
+            await api(
+              held ? '/api/agreement/roles/resign'
+                   : '/api/agreement/roles/decide',
+              held ? {role_uuid: role.uuid}
+                   : {role_uuid: role.uuid, decision: 'accepted'},
+            );
+            await load();
+          } catch (error) {
+            chip.disabled = false;
+            showToast(error.message, true);
+          }
+        };
+        return chip;
+      };
+
+      const rowFor = (person, actionable) => {
+        const row = document.createElement('div');
+        row.className = 'participant';
+        row.classList.toggle('is-self', Boolean(person.is_self));
+        row.append(avatarFor(person));
         const body = document.createElement('span');
         body.className = 'acceptance-body';
         const name = document.createElement('strong');
-        name.textContent = item.is_self ? `${item.name} (you)` : item.name;
-        const status = document.createElement('span');
-        status.className = 'acceptance-status';
-        status.textContent = statusLabels[item.status] || item.status;
-        body.append(name, status);
-        if (item.decided_at) {
-          const details = document.createElement('span');
-          details.className = 'acceptance-details';
-          const decided = new Date(item.decided_at).toLocaleString();
-          const expiry = item.expires_at
-            ? `expires ${new Date(item.expires_at).toLocaleString()}`
-            : 'no expiration';
-          const hash = item.reference_hash || '';
-          details.textContent = `${decided} · ${expiry} · ${hash.slice(0, 19)}…`;
-          details.title = hash;
-          badge.title = (
-            `${statusLabels[item.status] || item.status} · ${decided} · `
-            + `${expiry} · ${hash}`
-          );
-          body.append(details);
+        name.textContent = person.is_self ? 'You' : person.name;
+        body.append(name);
+        const chips = document.createElement('span');
+        chips.className = 'participant-roles';
+        const badges = badgesFor(person);
+        for (const role of badges) chips.append(badgeElement(role, actionable));
+        if (!badges.length) {
+          const none = document.createElement('span');
+          none.className = 'participant-observer';
+          none.textContent = 'holds no role here';
+          chips.append(none);
         }
-        badge.append(body);
-        badges.append(badge);
-      }
-      section.append(badges);
+        body.append(chips);
+        row.append(body);
+        return row;
+      };
 
-      const controls = document.createElement('div');
-      controls.className = 'acceptance-controls';
-      const expiryLabel = document.createElement('label');
-      expiryLabel.textContent = 'Expiration';
-      const expiryInput = document.createElement('input');
-      expiryInput.type = 'datetime-local';
-      expiryInput.setAttribute('aria-label', 'Acceptance expiration');
-      expiryLabel.append(expiryInput);
-      const decide = async decision => {
-        const expiresAt = expiryInput.value
-          ? new Date(expiryInput.value).toISOString()
-          : null;
-        try {
-          await api('/api/agreement/agreements/decision', {
-            agreement_uuid: current.uuid,
-            decision,
-            expires_at: expiresAt,
-          });
-          await load();
-          showToast(decision === 'accepted'
-            ? 'Agreement accepted' : 'Agreement refused');
-        } catch (error) { showToast(error.message, true); }
-      };
-      const accept = document.createElement('button');
-      accept.type = 'button';
-      accept.className = 'decision-accept';
-      accept.textContent = 'Accept current version';
-      accept.onclick = () => decide('accepted');
-      const refuse = document.createElement('button');
-      refuse.type = 'button';
-      refuse.className = 'decision-refuse';
-      refuse.textContent = 'Refuse';
-      const consequenceNames = (refusalConsequences || [])
-        .map(item => item.title);
-      const consequenceDescription = consequenceNames.length
-        ? (
-          `This will also mark ${consequenceNames.length} joined `
-          + `subagreement${consequenceNames.length === 1 ? '' : 's'} as refused: `
-          + `${consequenceNames.join(', ')}. They remain visible, but cannot be `
-          + 'changed until every parent is accepted again. Each descendant '
-          + 'must then be accepted again separately.'
-        )
-        : (
-          'Any subagreements remain visible, but cannot be changed until '
-          + 'this agreement is accepted again.'
-        );
-      refuse.onclick = () => {
-        document.querySelector('#confirmModalConfirmBtn').textContent = 'Refuse';
-        confirmAction(
-          'Refuse this agreement?',
-          consequenceDescription,
-          () => decide('refused'),
-        );
-      };
-      controls.append(expiryLabel, accept, refuse);
-      const content = document.createElement('div');
-      content.className = 'acceptance-content';
-      content.append(badges);
-      if (interactive) content.append(controls);
-      section.append(content);
+      const people = participants || [];
+      const me = people.find(person => person.is_self);
+      const others = people.filter(person => !person.is_self);
+      if (me) section.append(rowFor(me, interactive));
+      if (others.length) {
+        const rest = document.createElement('div');
+        rest.className = 'acceptance-badges';
+        for (const person of others) rest.append(rowFor(person, false));
+        section.append(rest);
+      }
       return section;
     };
-
     const findDisplayedNode = (uuid) => {
       const roots = [
         current,
@@ -750,9 +738,11 @@
       }
       card.append(columns);
 
-      // Who holds this, and where each answer stands. "Nobody holds this
-      // yet" is a normal state, not an error - a defined role nobody has
-      // taken is just unclaimed work.
+      // Who has been invited, and where each of them stands. Taking a role
+      // or stepping out of one happens on your own line in Participants -
+      // this is the definition, not the doing. The only actions here are the
+      // Identity holder's, because inviting and withdrawing are theirs
+      // alone and there is nowhere else for them to live.
       const holders = (payloadState.role_holders || {})[role.uuid] || [];
       const held = document.createElement('div');
       held.className = 'role-holders';
@@ -762,7 +752,7 @@
       if (!holders.length) {
         const none = document.createElement('p');
         none.className = 'role-unheld';
-        none.textContent = 'Nobody holds this yet';
+        none.textContent = 'Nobody invited yet';
         held.append(none);
       }
       for (const holder of holders) {
@@ -771,7 +761,7 @@
         row.dataset.status = holder.status;
         const who = document.createElement('span');
         who.className = 'role-holder-name';
-        who.textContent = holder.name;
+        who.textContent = holder.is_self ? 'You' : holder.name;
         const state = document.createElement('span');
         state.className = 'role-holder-status';
         state.textContent = HOLDER_STATUS[holder.status] || holder.status;
@@ -782,9 +772,10 @@
           state.title = new Date(holder.decided_at).toLocaleString();
         }
         row.append(who, state);
-        // Confirming somebody's request is an ordinary offer. Their answer
-        // is already on record, so the holding goes live at once - they are
-        // not asked to answer a second time.
+
+        // Confirming somebody's request is an ordinary offer: their answer
+        // is already on file, so the holding goes live at once. Always
+        // visible, because it is somebody waiting on you.
         if (interactive && payloadState.holds_identity
             && holder.status === 'requested' && !holder.is_self) {
           const confirm = document.createElement('button');
@@ -801,8 +792,10 @@
           };
           row.append(confirm);
         }
-        // Only where there is an offer to withdraw: a request and a
-        // withdrawn offer have none.
+
+        // Withdrawing an offer is destructive and rare, so it waits for a
+        // hover the way Delete does. Only where there is an offer to
+        // withdraw: a request and an already-withdrawn offer have none.
         if (interactive && payloadState.holds_identity
             && !['requested', 'revoked'].includes(holder.status)) {
           const revoke = document.createElement('button');
@@ -830,71 +823,7 @@
         held.append(row);
       }
 
-      // The decision this participant owes, if any - the most prominent
-      // thing on the card, because it is what the card is for.
-      const mine = holders.find(holder => holder.is_self);
-      if (interactive) {
-        const answer = document.createElement('div');
-        answer.className = 'role-answer';
-        const prompt = document.createElement('span');
-        prompt.className = 'role-answer-prompt';
-        const act = (label, className, run) => {
-          const button = document.createElement('button');
-          button.type = 'button';
-          button.className = className;
-          button.textContent = label;
-          button.onclick = run;
-          return button;
-        };
-        const decide = (decision, label, className) => act(
-          label, className, async () => {
-            try {
-              await api('/api/agreement/roles/decide',
-                {role_uuid: role.uuid, decision});
-              await load();
-            } catch (error) { showToast(error.message, true); }
-          },
-        );
-        const withdraw = (label, toast) => act(label, '', async () => {
-          try {
-            await api('/api/agreement/roles/resign', {role_uuid: role.uuid});
-            await load();
-            showToast(toast);
-          } catch (error) { showToast(error.message, true); }
-        });
-
-        if (mine?.status === 'accepted') {
-          answer.append(withdraw(
-            'Step out of this role', `You stepped out of ${role.data.name}`,
-          ));
-        } else if (mine?.status === 'requested') {
-          prompt.textContent =
-            'You asked to take this. Waiting for the Identity holder.';
-          answer.append(prompt, withdraw('Withdraw request', 'Request withdrawn'));
-        } else if (mine?.status === 'revoked') {
-          prompt.textContent = 'Your offer of this role was withdrawn.';
-          answer.append(prompt, withdraw('Clear', 'Cleared'));
-        } else if (mine) {
-          prompt.textContent = mine.status === 'outdated'
-            ? 'This role changed since you accepted it.'
-            : `You have been offered ${role.data.name}.`;
-          answer.append(
-            prompt,
-            decide('accepted', 'Accept', 'role-accept'),
-            decide('refused', 'Refuse', 'role-refuse'),
-          );
-        } else if (!payloadState.holds_identity) {
-          // Only the Identity holder can offer, so asking is the move
-          // available to somebody holding nothing. An Identity holder has
-          // the picker instead and would only be confirming themselves.
-          prompt.textContent = '';
-          answer.append(decide(
-            'accepted', `Ask to take ${role.data.name}`, 'role-ask',
-          ));
-        }
-        if (answer.childElementCount) held.append(answer);
-      }
-
+      // Inviting is the Identity holder's alone.
       if (interactive && payloadState.holds_identity) {
         const offered = new Set(holders.map(holder => holder.actor_uuid));
         const candidates = (payloadState.known_identities || [])
@@ -904,7 +833,7 @@
           picker.className = 'role-offer-picker';
           const blank = document.createElement('option');
           blank.value = '';
-          blank.textContent = 'Offer to…';
+          blank.textContent = 'Offer to\u2026';
           picker.append(blank);
           for (const person of candidates) {
             const option = document.createElement('option');
@@ -940,10 +869,10 @@
       const sectionHeading = document.createElement('div');
       sectionHeading.className = 'roles-heading';
       const title = document.createElement('h3');
-      title.textContent = 'Roles';
+      title.textContent = 'Role Definitions & Invitations';
       const explanation = document.createElement('p');
       explanation.textContent =
-        'What this agreement expects, and of whom.';
+        'What this agreement expects, and who has been invited to it.';
       sectionHeading.append(title, explanation);
       section.append(sectionHeading);
 
@@ -1045,13 +974,17 @@
         );
         article.append(notice);
       }
-      article.append(renderIdentity(
-        payload.identity || {state: 'vacant'}, currentInteractionAllowed,
-      ));
-      article.append(renderAcceptances(
-        payload.acceptances,
-        currentInteractionAllowed,
-        payload.refusal_consequences,
+      // Identity normally reads as a badge on whoever holds it, so the
+      // line only appears when it needs attention: contested, recorded
+      // twice, vacant, or held by somebody else and therefore takeable.
+      const identityState = payload.identity || {state: 'vacant'};
+      if (!(identityState.state === 'held'
+            && identityState.is_self
+            && !(identityState.claims || []).length)) {
+        article.append(renderIdentity(identityState, currentInteractionAllowed));
+      }
+      article.append(renderParticipants(
+        payload.participants, payload.identity, currentInteractionAllowed,
       ));
 
       const subagreements = displayedChildren(current, 'agreement_link');
@@ -1100,11 +1033,7 @@
         }
         organizationSection.append(row);
       }
-      const ownAcceptance = (payload.acceptances || []).find(item => item.is_self);
-      if (
-        currentInteractionAllowed
-        && ownAcceptance?.status === 'accepted'
-      ) {
+      if (currentInteractionAllowed && payload.holds_role) {
         organizationSection.append(composer('New subagreement name', async title => {
           await api('/api/agreement/agreements/create_subagreement', {
             parent_agreement_uuid: current.uuid,
@@ -1115,7 +1044,7 @@
         const prerequisite = document.createElement('p');
         prerequisite.className = 'subagreement-prerequisite';
         prerequisite.textContent = (
-          'Accept the current agreement version before creating a subagreement.'
+          'Take a role in this agreement before creating a subagreement.'
         );
         organizationSection.append(prerequisite);
       }

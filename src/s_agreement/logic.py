@@ -84,16 +84,13 @@ class AgreementLogic:
         if result.status == "ok":
             identity = self._create_identity(result.value)
             participant = self._create_default_participant(result.value)
-            decision = self._record_decision(
-                result.value, "accepted", None,
-            )
             self._remember_agreement(result.value.uuid)
             return SessionResult(
                 "ok",
                 value=result.value.uuid,
                 effects=[
                     *result.effects, *identity.effects,
-                    *participant.effects, *decision.effects,
+                    *participant.effects,
                 ],
             )
         return result
@@ -138,15 +135,16 @@ class AgreementLogic:
         if linked.status != "ok":
             self.session.delete(child.uuid)
             return linked
-        # Creating the relationship is also an explicit acceptance of the
-        # parent's new version. The child itself is a separately accepted
-        # topic, recorded by its own decision item.
+        # The creator takes Identity and the default role in the child,
+        # which is what makes them part of it.
         child_identity = self._create_identity(child)
         child_participant = self._create_default_participant(child)
-        parent_decision = self._record_decision(
-            self._node(parent.uuid, "agreement"), "accepted", None,
-        )
-        child_decision = self._record_decision(child, "accepted", None)
+        # The link is part of the parent document, so adding it outdates the
+        # creator's own acceptance of the parent - leaving them holding a
+        # stale acceptance of a change they just made, and unable to make a
+        # second subagreement, since that needs a current one. Making the
+        # change is accepting it.
+        reaffirmed = self._reaffirm_holdings(parent.uuid)
         self._remember_agreement(child.uuid)
         return SessionResult(
             "ok",
@@ -156,8 +154,7 @@ class AgreementLogic:
                 *linked.effects,
                 *child_identity.effects,
                 *child_participant.effects,
-                *parent_decision.effects,
-                *child_decision.effects,
+                *reaffirmed.effects,
             ],
         )
 
@@ -889,6 +886,38 @@ class AgreementLogic:
             return self.session.modify(existing.uuid, data, existing.weights)
         return self.session.create_child(role.uuid, data, {})
 
+    def _reaffirm_holdings(self, agreement_uuid: str) -> SessionResult:
+        """Re-sign this participant's own roles against the version they made.
+
+        Only for a change this session makes to a document it is required to
+        hold a current acceptance of; ordinary edits deliberately leave
+        everyone outdated, the author included, so that a change is read
+        before it is agreed to again.
+
+        Nodes are refetched each turn because modifying one replaces the
+        object rather than mutating it, so anything held across a write is
+        stale.
+        """
+        effects = []
+        agreement = self._node(agreement_uuid, "agreement")
+        role_uuids = [role.uuid for role in self.roles(agreement)] if agreement else []
+        for role_uuid in role_uuids:
+            agreement = self._node(agreement_uuid, "agreement")
+            role = self._node(role_uuid, "agreement_role")
+            if not agreement or not role:
+                continue
+            if not self._offer_for(role, self.session.identity.uuid):
+                continue
+            own = self._own_role_decision(role)
+            if not own or own.data.get("decision") != "accepted":
+                continue
+            renewed = self._record_role_decision(
+                agreement, role, "accepted", own.data.get("expires_at"),
+            )
+            if renewed.status == "ok":
+                effects.extend(renewed.effects)
+        return SessionResult("ok", effects=effects)
+
     def _adopt_offer_proposal(
         self, agreement: ProtocolNode, role: ProtocolNode, actor_uuid: str,
     ) -> SessionResult:
@@ -1006,7 +1035,24 @@ class AgreementLogic:
                 status = "accepted"
             holders.append({
                 "actor_uuid": actor_uuid,
+                # A request that has since been confirmed: the offer exists,
+                # but only as a proposal on the peer that wrote it. Nothing
+                # merges here without somebody's act, so the person who asked
+                # still has to take it up - they are told, rather than left
+                # watching a request that looks unanswered forever.
+                "confirmed_elsewhere": (
+                    status == "requested"
+                    and actor_uuid == self.session.identity.uuid
+                    and self._offer_proposed_to_me(agreement, role)
+                ),
                 "name": (member or {}).get("name") or "Not on this topic",
+                # Individual or Agreement. The view draws them differently,
+                # because "a person holds this" and "a body holds this" are
+                # not the same fact.
+                "actor_kind": (
+                    (offer.data.get("actor_kind") if offer else None)
+                    or "individual"
+                ),
                 "picture": (member or {}).get("picture") or "",
                 "is_self": actor_uuid == self.session.identity.uuid,
                 "status": status,
@@ -1016,6 +1062,28 @@ class AgreementLogic:
                 "offered_by": (offer.data.get("offered_by") if offer else None),
             })
         return sorted(holders, key=lambda item: (item["status"], item["name"]))
+
+    def _offer_proposed_to_me(
+        self, agreement: ProtocolNode, role: ProtocolNode,
+    ) -> bool:
+        """Whether some peer holds an offer of this role to this session."""
+        mine = self.session.identity.uuid
+        for address in self.session.peer_addresses(agreement.uuid):
+            peer_topic = self.session.get_cached_peer_subtree(
+                address, agreement.uuid,
+            )
+            peer_role = (
+                self._find_in_subtree(peer_topic, role.uuid)
+                if peer_topic else None
+            )
+            if peer_role and any(
+                child.data.get("type") == "agreement_role_offer"
+                and child.data.get("actor_uuid") == mine
+                and not child.data.get("revoked_at")
+                for child in peer_role.live_children()
+            ):
+                return True
+        return False
 
     def _observed_decisions(
         self, agreement: ProtocolNode, role: ProtocolNode,
@@ -1093,11 +1161,8 @@ class AgreementLogic:
             subtree, self._agreement_container().uuid,
         )
         if result.status == "ok":
-            agreement = self._node(result.value, "agreement")
-            decision = self._record_decision(
-                agreement, "accepted", None,
-            )
-            result.effects.extend(decision.effects)
+            # Joining is not holding. The newcomer arrives able to read
+            # and asks for a role from there (2.4b).
             self._remember_agreement(result.value)
         return result
 
@@ -1112,7 +1177,7 @@ class AgreementLogic:
         "agreement_identity", "agreement_role_offer", "agreement_role_decision",
     })
     OWNED_NODE_TYPES = frozenset({
-        *REACTABLE, "agenda_item", "agreement_decision",
+        *REACTABLE, "agenda_item",
     })
 
     def accept_peer_node(self, source_addr: str, node_uuid: str,
@@ -1161,7 +1226,7 @@ class AgreementLogic:
             source_addr,
             agreement_uuid,
             lambda node, _event_type: (
-                node.data.get("type") != "agreement_decision"
+                node.data.get("type") != "agreement_role_decision"
             ),
         )
         return SessionResult("ok", value=changed)
@@ -1189,12 +1254,9 @@ class AgreementLogic:
                 for event in self.session.analyze_peer_transitions(
                     address, agreement_uuid,
                 )
-                if (
-                    not self._is_decision_event(address, event)
-                    and not (
-                        event["type"] == "in_transition"
-                        and liveness.get("state") == "stale"
-                    )
+                if not (
+                    event["type"] == "in_transition"
+                    and liveness.get("state") == "stale"
                 )
             )
         return events
@@ -1237,8 +1299,14 @@ class AgreementLogic:
             "identity_uuid": self.session.identity.uuid,
             "known_identities": self.session.known_identities(),
             "organization": self.organization_payload(),
-            "acceptances": (
-                self.acceptance_badges(selected.uuid) if selected else []
+            "participants": (
+                self.participants(selected.uuid) if selected else []
+            ),
+            # Whether this session holds a role here. Taking a role is the
+            # only way to be part of an agreement, so this is what the view
+            # asks before offering anything that only a participant does.
+            "holds_role": (
+                self._has_current_acceptance(selected) if selected else False
             ),
             "identity": (
                 self.identity_payload(selected) if selected
@@ -1279,7 +1347,7 @@ class AgreementLogic:
     # as document-change proposals. Their divergences are unaffected:
     # transition events come from the protocol tree, not from this view.
     NON_DOCUMENT_TYPES = frozenset({
-        "agreement_decision", "agreement_identity",
+        "agreement_identity",
         "agreement_role_offer", "agreement_role_decision",
     })
 
@@ -1430,46 +1498,6 @@ class AgreementLogic:
             return self.collaboration.network_info(topic_uuid)
         return self.session.get_network_info()
 
-    def set_decision(
-        self,
-        agreement_uuid: str,
-        decision: str,
-        expires_at: str | None = None,
-    ) -> SessionResult:
-        agreement = self._node(agreement_uuid, "agreement")
-        if not agreement:
-            return SessionResult("error", reason="agreement not found")
-        allowed = self._interaction_guard(agreement)
-        if allowed.status != "ok":
-            return allowed
-        normalized_decision = str(decision or "").strip().lower()
-        if normalized_decision not in {"accepted", "refused"}:
-            return SessionResult(
-                "error", reason="decision must be accepted or refused",
-            )
-        normalized_expiry = self._normalize_expiry(expires_at)
-        if expires_at and normalized_expiry is None:
-            return SessionResult(
-                "error", reason="expiration must be an ISO date or timestamp",
-            )
-        result = self._record_decision(
-            agreement, normalized_decision, normalized_expiry,
-        )
-        if result.status == "ok" and normalized_decision == "refused":
-            effects = list(result.effects)
-            for descendant in self.descendant_agreements(agreement.uuid):
-                refused = self._record_decision(
-                    descendant, "refused", normalized_expiry,
-                )
-                if refused.status == "ok":
-                    effects.extend(refused.effects)
-            result.effects = effects
-        if result.status == "ok" and normalized_decision == "accepted":
-            # A child invitation may already be cached but deliberately
-            # unmounted because an ancestor was not yet accepted.
-            self.session.mount_cached_topics(AGREEMENT_APPLICATION_ID)
-        return result
-
     def interaction_payload(self, agreement: ProtocolNode) -> dict:
         result = self._interaction_guard(agreement)
         return {
@@ -1505,74 +1533,54 @@ class AgreementLogic:
                 pending.append(child)
         return descendants
 
-    def acceptance_badges(self, agreement_uuid: str) -> list[dict]:
+    def participants(self, agreement_uuid: str) -> list[dict]:
+        """Everyone on this topic, and what each of them holds.
+
+        Two populations that used to be one. *Peers* are who this session
+        syncs the topic with; *actors* are who has taken a role. Neither
+        contains the other: somebody present holding nothing is an observer,
+        visible but not part of the agreement, and somebody holding a role
+        this session cannot reach is the reverse, listed with their answer
+        unobserved rather than guessed at.
+        """
         agreement = self._node(agreement_uuid, "agreement")
         if not agreement:
             return []
-        members = self._topic_members(agreement_uuid)
-        identity_by_address = {
-            address: member
-            for member in members
-            for address in member.get("addresses") or [member.get("address")]
-            if address
+        people = {
+            member["uuid"]: {**member, "actor_kind": "individual", "roles": []}
+            for member in self._topic_members(agreement_uuid)
         }
-        latest: dict[str, dict] = {}
-
-        def consider(node: ProtocolNode, expected_identity_uuid: str) -> None:
-            data = node.data
-            if (
-                data.get("type") != "agreement_decision"
-                or data.get("identity_uuid") != expected_identity_uuid
-            ):
-                return
-            current = latest.get(expected_identity_uuid)
-            if (
-                current is None
-                or str(data.get("decided_at") or "")
-                > str(current.get("decided_at") or "")
-            ):
-                latest[expected_identity_uuid] = dict(data)
-
-        for child in agreement.live_children():
-            consider(child, self.session.identity.uuid)
-        for address in self.session.peer_addresses(agreement_uuid):
-            member = identity_by_address.get(address)
-            if not member:
-                continue
-            peer_topic = self.session.get_cached_peer_subtree(
-                address, agreement_uuid,
+        for role in self.roles(agreement):
+            for holder in self.role_holders(agreement, role):
+                person = people.get(holder["actor_uuid"])
+                if person is None:
+                    person = people[holder["actor_uuid"]] = {
+                        "uuid": holder["actor_uuid"],
+                        "name": holder["name"],
+                        "picture": holder["picture"],
+                        "actor_kind": holder["actor_kind"],
+                        "address": "",
+                        "addresses": [],
+                        "is_self": holder["is_self"],
+                        "roles": [],
+                    }
+                person["roles"].append({
+                    "uuid": role.uuid,
+                    "name": role.data.get("name") or "Untitled role",
+                    "status": holder["status"],
+                    "decided_at": holder["decided_at"],
+                    "expires_at": holder["expires_at"],
+                })
+        for person in people.values():
+            person["is_observer"] = not any(
+                item["status"] == "accepted" for item in person["roles"]
             )
-            if not peer_topic:
-                continue
-            for child in peer_topic.live_children():
-                consider(child, member["uuid"])
-
-        current_reference = self.agreement_reference_hash(agreement)
-        badges = []
-        for member in members:
-            record = latest.get(member["uuid"])
-            status = "pending"
-            if record:
-                if record.get("decision") == "refused":
-                    status = "refused"
-                elif self._is_expired(record.get("expires_at")):
-                    status = "expired"
-                elif record.get("reference_hash") != current_reference:
-                    status = "outdated"
-                elif record.get("decision") == "accepted":
-                    status = "accepted"
-            badges.append({
-                **member,
-                "status": status,
-                "decision": record.get("decision") if record else None,
-                "decided_at": record.get("decided_at") if record else None,
-                "reference_hash": (
-                    record.get("reference_hash") if record else None
-                ),
-                "expires_at": record.get("expires_at") if record else None,
-                "current_reference_hash": current_reference,
-            })
-        return badges
+        return sorted(
+            people.values(),
+            key=lambda item: (
+                item["is_observer"], not item["is_self"], item["name"],
+            ),
+        )
 
     def role_reference_hash(
         self, agreement: ProtocolNode, role: ProtocolNode,
@@ -1633,38 +1641,6 @@ class AgreementLogic:
         ).encode("utf-8")
         return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
-    def _record_decision(
-        self,
-        agreement: ProtocolNode | None,
-        decision: str,
-        expires_at: str | None,
-    ) -> SessionResult:
-        if not agreement:
-            return SessionResult("error", reason="agreement not found")
-        data = {
-            "type": "agreement_decision",
-            "identity_uuid": self.session.identity.uuid,
-            "decision": decision,
-            "decided_at": self._now(),
-            "reference_hash": self.agreement_reference_hash(agreement),
-            "expires_at": expires_at,
-        }
-        existing = max(
-            (
-                child for child in agreement.live_children()
-                if (
-                    child.data.get("type") == "agreement_decision"
-                    and child.data.get("identity_uuid")
-                    == self.session.identity.uuid
-                )
-            ),
-            key=lambda node: str(node.data.get("decided_at") or ""),
-            default=None,
-        )
-        if existing:
-            return self.session.modify(existing.uuid, data, existing.weights)
-        return self.session.create_child(agreement.uuid, data, {})
-
     def _check_parent_chain(
         self,
         parent_uuid: str,
@@ -1713,25 +1689,33 @@ class AgreementLogic:
         return SessionResult("ok")
 
     def _has_current_acceptance(self, agreement: ProtocolNode) -> bool:
-        own = max(
-            (
-                child for child in agreement.live_children()
-                if (
-                    child.data.get("type") == "agreement_decision"
-                    and child.data.get("identity_uuid")
-                    == self.session.identity.uuid
-                )
-            ),
-            key=lambda node: str(node.data.get("decided_at") or ""),
-            default=None,
-        )
-        return bool(
-            own
-            and own.data.get("decision") == "accepted"
-            and not self._is_expired(own.data.get("expires_at"))
-            and own.data.get("reference_hash")
-            == self.agreement_reference_hash(agreement)
-        )
+        """Whether this participant currently holds a role in this agreement.
+
+        Taking a role is the only way to be part of an agreement, so this is
+        what "accepted" now means. Deliberately local-only: it runs inside
+        the ancestor walk of every guard, and what matters there is this
+        session's own standing, which needs no peer lookup.
+        """
+        # Identity is a role - singular, and shaped differently only for that
+        # reason - so holding it is being part of the agreement. Otherwise the
+        # person who speaks for an agreement could be told to take a role in
+        # it before they may act, which is nonsense.
+        if self.holds_identity(agreement):
+            return True
+        mine = self.session.identity.uuid
+        for role in self.roles(agreement):
+            if not self._offer_for(role, mine):
+                continue
+            own = self._own_role_decision(role)
+            if (
+                own
+                and own.data.get("decision") == "accepted"
+                and not self._is_expired(own.data.get("expires_at"))
+                and own.data.get("reference_hash")
+                == self.role_reference_hash(agreement, role)
+            ):
+                return True
+        return False
 
     def _topic_members(self, agreement_uuid: str) -> list[dict]:
         identities = self.session.known_identities()
@@ -1774,18 +1758,6 @@ class AgreementLogic:
                 "is_self": False,
             })
         return people
-
-    def _is_decision_event(self, peer_addr: str, event: dict) -> bool:
-        node_uuid = event.get("node_uuid")
-        local = self.session.protocol.index.get(node_uuid) if node_uuid else None
-        peer = (
-            self.session.get_cached_peer_subtree(peer_addr, node_uuid)
-            if node_uuid else None
-        )
-        return any(
-            node and node.data.get("type") == "agreement_decision"
-            for node in (local, peer)
-        )
 
     @staticmethod
     def _now() -> str:

@@ -204,27 +204,53 @@ class AssetTests(unittest.TestCase):
             self.agreement,
         )
 
-    def test_acceptance_badges_use_identity_and_version_details(self):
+    def test_participants_are_listed_by_the_roles_they_hold(self):
         for marker in (
             "acceptance-avatar",
-            "item.picture",
-            "item.name",
-            "item.reference_hash",
-            "item.expires_at",
-            "Accepted",
-            "Refused",
+            "person.picture",
+            "role-chip",
+            "holds no role here",
+            # Identity reads as a role like any other, told apart by a key.
+            "role.identity ?",
+            "Identity",
         ):
             self.assertIn(marker, self.agreement)
 
-    def test_refusal_confirmation_describes_descendant_consequences(self):
+    def test_only_your_own_badges_act(self):
+        # Somebody else's standing is a statement, not a control over
+        # them, so those badges are inert.
+        self.assertIn("rowFor(me, interactive)", self.agreement)
+        self.assertIn("rowFor(person, false)", self.agreement)
+        self.assertIn("Click to step out", self.agreement)
+        self.assertIn("Click to take it", self.agreement)
+
+    def test_an_unreachable_answer_is_not_worded_as_an_unanswered_one(self):
+        # "They have not answered" and "this session cannot see whether they
+        # have" are different facts, and the interface has to say which.
+        self.assertIn("offered, not yet decided", self.agreement)
+        self.assertIn("answer not visible from here", self.agreement)
+        self.assertIn(
+            "you cannot see their answer", self.agreement,
+        )
+
+    def test_destructive_role_actions_state_their_consequence(self):
         for marker in (
-            "Refuse this agreement?",
-            "subagreement",
-            "remain visible",
-            "must then be accepted again separately",
+            # Revoking says what survives it and what does not.
+            "This withdraws the offer",
+            "is theirs and stays",
+            # Taking Identity says what it does to everyone else.
+            "writes a competing holder into the same record",
             "confirmModalConfirmBtn",
         ):
             self.assertIn(marker, self.agreement)
+
+    def test_inviting_and_withdrawing_belong_to_identity_alone(self):
+        # A request is somebody waiting on you, so answering it is
+        # always visible; withdrawing an offer is destructive and rare,
+        # so it waits for a hover the way Delete does.
+        self.assertIn("payloadState.holds_identity", self.agreement)
+        self.assertIn("role-confirm", self.agreement)
+        self.assertIn("role-revoke", self.agreement)
 
     def test_assets_never_navigate_to_the_bare_root_with_a_query(self):
         # "/" serves whichever application is primary, so a root-relative link

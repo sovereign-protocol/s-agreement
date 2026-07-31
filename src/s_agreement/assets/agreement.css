@@ -375,10 +375,77 @@ h2.element-label { margin: 0 0 4px; }
 .element-add:focus-visible,
 .element-delete:focus-visible,
 .element-move:focus-visible { opacity: 1; }
+/* Hiding "+ Section" until hover is fine beside existing sections and wrong
+   on an agreement that has none: the document then looks empty with no
+   visible way in. Starting to write is the primary action here, not a
+   destructive one, so on the agreement's own row it always shows. */
+#document > .element-row .element-add { opacity: 1; }
 
 .editable { border-radius: 4px; padding: 2px 4px; margin-left: -4px; cursor: text; }
 .editable:hover { background: var(--hover); }
 .editable:focus { outline: 2px solid var(--proposal); outline-offset: 1px; background: var(--hover); }
+
+/* Participants are listed by the roles they hold, because holding a role is
+   what being part of an agreement means. Somebody present who holds nothing
+   is shown, and shown to be outside. */
+.participant {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 0;
+}
+/* Your own line comes first and is the only one that acts. */
+.participant.is-self {
+  padding: 7px 8px;
+  margin: 0 0 6px 0;
+  border-radius: 8px;
+  background: var(--hover);
+}
+.acceptance-avatar[data-kind="agreement"] { letter-spacing: -1px; }
+.participant-roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 2px;
+}
+.role-chip {
+  font-size: 11px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+}
+/* Your own badges are the control: click to take a role or step out of it.
+   Everybody else's are a statement, so they are not clickable at all. */
+.participant.is-self .role-chip:not(:disabled) { cursor: pointer; }
+.participant.is-self .role-chip:not(:disabled):hover {
+  border-color: var(--proposal);
+  color: var(--text);
+}
+.role-chip:disabled { cursor: default; }
+.role-chip[data-identity="true"] {
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+.role-chip[data-status="accepted"] {
+  border-color: var(--proposal);
+  color: var(--proposal);
+}
+.role-chip[data-status="outdated"],
+.role-chip[data-status="expired"] { border-color: #f59e0b; color: #f59e0b; }
+.role-chip[data-status="refused"] { text-decoration: line-through; }
+.role-chip[data-status="unobserved"] { font-style: italic; opacity: 0.6; }
+.participant-observer { font-size: 12px; color: var(--text-muted); }
+.observers-label {
+  margin: 10px 4px 2px 22px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.observers { opacity: 0.75; }
 
 /* Identity is a line, not a panel: who speaks for this agreement, stated
    once and then out of the way. It only raises its voice when contested. */

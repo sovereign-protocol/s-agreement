@@ -80,8 +80,8 @@ class AgreementFacade:
     def organization(self) -> dict:
         return self._logic.organization_payload()
 
-    def acceptance_badges(self, agreement_uuid: str) -> list[dict]:
-        return self._logic.acceptance_badges(agreement_uuid)
+    def participants(self, agreement_uuid: str) -> list[dict]:
+        return self._logic.participants(agreement_uuid)
 
     def transition_events(
         self, agreement_uuid: str, network: dict | None = None,
@@ -101,16 +101,6 @@ class AgreementFacade:
 
     def create_subagreement(self, parent_agreement_uuid: str, title: str):
         return self._logic.create_subagreement(parent_agreement_uuid, title)
-
-    def set_decision(
-        self,
-        agreement_uuid: str,
-        decision: str,
-        expires_at: str | None = None,
-    ):
-        return self._logic.set_decision(
-            agreement_uuid, decision, expires_at,
-        )
 
     def delete_agreement(self, agreement_uuid: str):
         return self._logic.delete_agreement(agreement_uuid)

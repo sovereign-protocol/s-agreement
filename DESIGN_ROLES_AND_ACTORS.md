@@ -61,6 +61,13 @@ role in the parent. `agreement_decision` is retired in favour of
 - **Identity has exactly one holder.** It is shaped differently from other
   roles because of cardinality, not privilege (§2.2).
 
+**[DONE]** Because Identity *is* a role, holding it is being part of the
+agreement, and `_has_current_acceptance` counts it. Anything else lets the
+application tell the person who speaks for an agreement to take a role in
+it before they may act — which is how this was found. The consequence is
+that somebody cannot step out of their own agreement by refusing roles
+while still holding Identity; they have to hand Identity on first.
+
 ## 2. Rules
 
 ### 2.1 Authority
@@ -323,13 +330,13 @@ sees.
 Each step ships a working application. The risky graph rewrite is last, after
 roles are proven as content.
 
-### Step 0 — Baseline
+### Step 0 — Baseline **[DONE]**
 
 Commit the in-flight tree/sub-agreement/badge work (1,784 insertions across
 `logic.py`, `agreement.html`, `agreement.css`, controller, facade, tests) on
 its own branch before anything is layered on it.
 
-### Step 1 — Roles as content
+### Step 1 — Roles as content **[DONE]**
 
 Roles, accountabilities and domains as document nodes. CRUD, ordering,
 reactions. No offers, no holdings, no Identity. Purely additive — the existing
@@ -346,7 +353,11 @@ acceptance model keeps working, and describing roles is useful on its own.
 **Done when** a role with accountabilities and domains can be authored,
 reordered, diverged and reconciled exactly as clauses can.
 
-### Step 2 — Identity, offers, decisions
+### Step 2 — Identity, offers, decisions **[DONE]**
+
+Including the retirement of `agreement_decision`: being part of an
+agreement is holding a role in it, so that is what `_has_current_acceptance`
+now reads, and the descendant-refusal cascade is gone with it (§2.4).
 
 Actor is still Individual only.
 
@@ -413,7 +424,7 @@ structured, but unmistakably part of the thing you are accepting.
 The existing shell survives: `aside#organization` left, document pane right,
 full re-render per payload.
 
-### 4.2 Role card
+### 4.2 Role card — definitions and invitations
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -432,16 +443,28 @@ full re-render per payload.
 └─────────────────────────────────────────────────────┘
 ```
 
+**[DONE]** The region is titled *Role Definitions & Invitations*, and it is
+the definition rather than the doing:
+
 - Name and purpose use the existing `editable` in-place pattern — click,
   commit on blur or Enter, revert on Escape. No modal between reader and text.
 - Accountabilities and domains reuse the clause affordances: add composer,
   delete, reorder.
-- **Accept / Refuse appear only on cards offered to me, and are the most
-  prominent control on the card.** This is the interaction the feature exists
-  for.
-- `+ offer to…` and per-holder revoke render only when I hold Identity.
-- A vacant role is normal, not an error state — "Nobody holds this yet",
+- **Held by** lists who has been invited and where each stands. Taking a
+  role or stepping out of one is *not* here — it is on your own line in
+  Participants (§4.5), so one place answers "what is this role" and
+  another answers "what am I doing about it".
+- The only controls are the Identity holder's, because inviting and
+  withdrawing are theirs alone and have nowhere else to live: an
+  `Offer to…` picker, **Confirm** on a request, and **Revoke** where there
+  is an offer to withdraw. Confirm is always visible — somebody is waiting
+  on you; Revoke waits for a hover, like Delete.
+- A vacant role is normal, not an error state — "Nobody invited yet",
   neutral styling.
+
+Confirm cannot be dropped in favour of the picker alone: the picker
+excludes anybody already listed under *Held by*, and a requester is listed
+there. Without the button a request is unanswerable.
 
 ### 4.3 Holder status
 
@@ -458,7 +481,12 @@ Six states, visually distinct, and `unobserved` must not read as `pending`:
 
 ### 4.4 Identity
 
-One line at the top of the agreement, not a panel:
+**[DONE]** The line only appears when Identity needs attention —
+contested, recorded twice, vacant, or held by somebody else and therefore
+takeable. When you hold it cleanly it is already visible as your own badge
+(§4.5) and the line would be repeating itself.
+
+One line, not a panel:
 
 ```
 🔑 Identity: Andre                                    ⋯
@@ -484,14 +512,28 @@ not the mechanism:
 > Andre currently holds Identity. Taking it will create a divergence, and
 > **your role offers will not be adopted by others** until it is resolved.
 
-### 4.5 Acceptance panel
+### 4.5 Participants — your line acts, everybody else's states
 
-Today a flat list of topic members with one status. Becomes people rows with
-their roles as chips beneath, each chip carrying its own status — a person may
-hold three roles in three different states.
+**[DONE]** Replaces the agreement-level acceptance panel. People rows with
+their roles as badges, each carrying its own status — somebody may hold
+three roles in three different states.
 
-Observers (peers holding no role) render in a separate muted group. They are
-present but not part of the agreement, and the UI should say so plainly.
+**Your own line comes first and is the only one that acts.** A badge is a
+control: click to take the role, click again to step out, and it changes on
+the spot. **Refuse is not an action here** — the choice is holding or not
+holding.
+
+Everybody else's badges are inert. Where somebody else stands is a
+statement of fact, not a control over them, and drawing it as a button
+would say otherwise.
+
+Identity renders as an ordinary badge marked with a key (§1.3), so what it
+is — one of the roles a person holds — is visible rather than explained.
+Actor kinds are drawn differently, so "a person holds this" and "a body
+holds this" do not read alike.
+
+Somebody present holding nothing shows as *holds no role here*: visible,
+and visibly outside.
 
 ### 4.6 Organization tree
 

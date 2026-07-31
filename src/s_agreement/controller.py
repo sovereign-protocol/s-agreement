@@ -39,14 +39,6 @@ def build_routes(logic, runtime) -> list[Route]:
             runtime, logic.delete_agreement(data["agreement_uuid"]),
         )
 
-    async def api_set_decision(request: Request):
-        data = await request.json()
-        return await _json_result(runtime, logic.set_decision(
-            data["agreement_uuid"],
-            data.get("decision", ""),
-            data.get("expires_at"),
-        ))
-
     async def api_create_section(request: Request):
         data = await request.json()
         return await _json_result(runtime, logic.create_section(
@@ -240,11 +232,6 @@ def build_routes(logic, runtime) -> list[Route]:
         Route("/api/agreement/agreements/select", api_select_agreement, methods=["POST"]),
         Route("/api/agreement/agreements/rename", api_rename_agreement, methods=["POST"]),
         Route("/api/agreement/agreements/delete", api_delete_agreement, methods=["POST"]),
-        Route(
-            "/api/agreement/agreements/decision",
-            api_set_decision,
-            methods=["POST"],
-        ),
         Route("/api/agreement/sections/create", api_create_section, methods=["POST"]),
         Route("/api/agreement/sections/rename", api_rename_section, methods=["POST"]),
         Route("/api/agreement/sections/delete", api_delete_section, methods=["POST"]),

@@ -97,9 +97,23 @@ already express consent:
 | Situation | My replica | Their replica | Event |
 |---|---|---|---|
 | Alice holds it | Alice | Alice | `in_agreement` |
-| Alice offers to Bob | Bob | Alice | `divergence` |
+| Alice offers to Bob | Bob | Alice | `peer_made_changes` |
 | Bob accepts | Bob | Bob | `in_agreement` |
-| Bob self-installs | Alice | Bob | `divergence` |
+| Bob self-installs, Alice idle | Alice | Bob | `peer_made_changes` |
+| Both write at once | Charlie | Bob | `divergence` |
+
+**[DONE]** The event is `divergence` only when *both* sides wrote since
+their last common state. One side writing while the other sits still is an
+ordinary peer change — measured, not assumed: `test_identity_handover_
+converges_and_a_claim_diverges` and `test_two_sides_naming_different_holders_
+at_once_diverge`.
+
+That distinction changes nothing structurally, because both event types carry
+`peer_addr` and both are settled by the same `accept_peer_node` /
+`rollback_peer_node`. It does change wording: a self-install cannot be
+promised to "create a divergence", so the interface warns about a competing
+record the other side must settle, which is true in both cases. The view
+keys off the holder each replica names, never off the event type.
 
 Handover is not a new verb: Alice writing `holder = Bob` is a proposal, Bob
 accepting it is `accept_peer_node`. A contested claim is the same shape and

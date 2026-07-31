@@ -804,6 +804,176 @@ class AgreementLogicTests(unittest.TestCase):
             ["Clause one.", "Clause two."],
         )
 
+    def test_the_creator_holds_identity_of_what_they_create(self):
+        runtime = self.runtime(9488)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        child_uuid = runtime.logic.create_subagreement(
+            agreement_uuid, "Operations",
+        ).value
+
+        for uuid in (agreement_uuid, child_uuid):
+            agreement = runtime.session.protocol.index[uuid]
+            self.assertTrue(runtime.logic.holds_identity(agreement))
+            self.assertEqual(
+                runtime.logic.identity_holder(agreement),
+                runtime.session.identity.uuid,
+            )
+        payload = runtime.logic.document_payload(agreement_uuid)
+        self.assertEqual(payload["identity"]["state"], "held")
+        self.assertTrue(payload["identity"]["is_self"])
+        self.assertEqual(payload["identity"]["claims"], [])
+
+    def test_identity_is_a_record_beside_the_document_not_inside_it(self):
+        runtime = self.runtime(9489)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+
+        def acceptance():
+            return next(
+                badge["status"]
+                for badge in runtime.logic.acceptance_badges(agreement_uuid)
+                if badge["is_self"]
+            )
+
+        payload = runtime.logic.document_payload(agreement_uuid)
+        # Not document content, so it never renders as a document change.
+        self.assertNotIn(
+            "agreement_identity",
+            {child["data"].get("type")
+             for child in payload["agreement"]["children"]},
+        )
+        # A handover changes who holds a role, not what the agreement says,
+        # so it must not re-open everybody's acceptance.
+        self.assertEqual(acceptance(), "accepted")
+        other = "another-actor-uuid"
+        self.assertEqual(
+            runtime.logic.offer_identity(agreement_uuid, other).status, "ok",
+        )
+        self.assertEqual(acceptance(), "accepted")
+
+    def test_only_the_holder_hands_identity_on_but_anyone_may_take_it(self):
+        left, right = self.runtime(9490), self.runtime(9491)
+        agreement_uuid = left.logic.create_agreement("Charter").value
+        connect(left, right, agreement_uuid)
+        right.logic.accept_agreement_invitation(
+            right.session.protocol.index[agreement_uuid],
+        )
+
+        agreement = right.session.protocol.index[agreement_uuid]
+        self.assertFalse(right.logic.holds_identity(agreement))
+        handed = right.logic.offer_identity(
+            agreement_uuid, right.session.identity.uuid,
+        )
+        self.assertEqual(handed.status, "error")
+        self.assertIn("only the Identity holder", handed.reason)
+        # Taking is never refused. No rule read from an observer-relative
+        # view can tell a vacant seat from a holder you do not sync with, so
+        # the seat is takeable and the conflict is surfaced instead.
+        self.assertEqual(right.logic.take_identity(agreement_uuid).status, "ok")
+        self.assertTrue(
+            right.logic.holds_identity(
+                right.session.protocol.index[agreement_uuid],
+            ),
+        )
+
+    def test_identity_handover_converges_and_a_claim_diverges(self):
+        left, right = self.runtime(9492), self.runtime(9493)
+        agreement_uuid = left.logic.create_agreement("Charter").value
+        connect(left, right, agreement_uuid)
+        right.logic.accept_agreement_invitation(
+            right.session.protocol.index[agreement_uuid],
+        )
+        sync(left, right)
+
+        # Right takes the seat while left, holding it, does nothing. One side
+        # wrote, so this arrives as an ordinary peer change rather than a
+        # divergence - the seat is contested in meaning but not in the
+        # protocol's sense, and the same adopt/rollback settles it either way.
+        right.logic.take_identity(agreement_uuid)
+        sync(left, right)
+        contested = left.logic.document_payload(agreement_uuid)["identity"]
+        node_uuid = contested["node_uuid"]
+        self.assertEqual(
+            left.logic.document_payload(
+                agreement_uuid,
+            )["transition_by_node"][node_uuid]["type"],
+            "peer_made_changes",
+        )
+        self.assertEqual(len(contested["claims"]), 1)
+        self.assertEqual(
+            contested["claims"][0]["holder_actor_uuid"],
+            right.session.identity.uuid,
+        )
+        # The peer naming itself is accepting a handover rather than staking
+        # a claim over a third party - the view has to say which.
+        self.assertTrue(contested["claims"][0]["is_handover"])
+
+        # Adopting the peer's node is the whole resolution: no separate
+        # accept step, because agreeing on the node *is* the consent.
+        self.assertEqual(
+            left.logic.accept_peer_node(right.peer_addr, node_uuid).status, "ok",
+        )
+        sync(left, right)
+        settled = left.logic.document_payload(agreement_uuid)["identity"]
+        self.assertEqual(settled["claims"], [])
+        self.assertEqual(
+            settled["holder_actor_uuid"], right.session.identity.uuid,
+        )
+        self.assertFalse(
+            left.logic.holds_identity(
+                left.session.protocol.index[agreement_uuid],
+            ),
+        )
+
+    def test_two_sides_naming_different_holders_at_once_diverge(self):
+        left, right = self.runtime(9495), self.runtime(9496)
+        agreement_uuid = left.logic.create_agreement("Charter").value
+        connect(left, right, agreement_uuid)
+        right.logic.accept_agreement_invitation(
+            right.session.protocol.index[agreement_uuid],
+        )
+        sync(left, right)
+
+        # Both write the same node without seeing the other: left hands the
+        # seat to a third party, right takes it. That is a real divergence,
+        # and it is the same node, which is the whole reason the single-node
+        # encoding works - two separate claim nodes could never diverge.
+        left.logic.offer_identity(agreement_uuid, "third-actor-uuid")
+        right.logic.take_identity(agreement_uuid)
+        sync(left, right)
+
+        payload = left.logic.document_payload(agreement_uuid)
+        node_uuid = payload["identity"]["node_uuid"]
+        self.assertEqual(
+            payload["transition_by_node"][node_uuid]["type"], "divergence",
+        )
+        self.assertEqual(
+            left.logic.accept_peer_node(right.peer_addr, node_uuid).status, "ok",
+        )
+        settled = left.logic.document_payload(agreement_uuid)
+        self.assertNotEqual(
+            settled["transition_by_node"].get(node_uuid, {}).get("type"),
+            "divergence",
+        )
+        self.assertEqual(
+            settled["identity"]["holder_actor_uuid"],
+            right.session.identity.uuid,
+        )
+
+    def test_identity_writes_obey_the_read_only_guard(self):
+        runtime = self.runtime(9494)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_subagreement(
+            parent_uuid, "Operations",
+        ).value
+        runtime.logic.set_decision(parent_uuid, "refused")
+
+        for result in (
+            runtime.logic.take_identity(child_uuid),
+            runtime.logic.offer_identity(child_uuid, "someone"),
+        ):
+            self.assertEqual(result.status, "error")
+            self.assertIn("Read-only", result.reason)
+
     def test_a_role_carries_accountabilities_and_domains_as_nodes(self):
         runtime = self.runtime(9480)
         agreement_uuid = runtime.logic.create_agreement("Charter").value

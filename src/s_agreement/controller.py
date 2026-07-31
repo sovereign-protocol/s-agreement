@@ -97,6 +97,18 @@ def build_routes(logic, runtime) -> list[Route]:
         data = await request.json()
         return await _json_result(runtime, logic.delete_clause(data["clause_uuid"]))
 
+    async def api_take_identity(request: Request):
+        data = await request.json()
+        return await _json_result(
+            runtime, logic.take_identity(data["agreement_uuid"]),
+        )
+
+    async def api_offer_identity(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.offer_identity(
+            data["agreement_uuid"], data.get("actor_uuid", ""),
+        ))
+
     async def api_create_role(request: Request):
         data = await request.json()
         return await _json_result(runtime, logic.create_role(
@@ -215,6 +227,14 @@ def build_routes(logic, runtime) -> list[Route]:
         Route("/api/agreement/clauses/create", api_create_clause, methods=["POST"]),
         Route("/api/agreement/clauses/update", api_update_clause, methods=["POST"]),
         Route("/api/agreement/clauses/delete", api_delete_clause, methods=["POST"]),
+        Route(
+            "/api/agreement/identity/take", api_take_identity, methods=["POST"],
+        ),
+        Route(
+            "/api/agreement/identity/offer",
+            api_offer_identity,
+            methods=["POST"],
+        ),
         Route("/api/agreement/roles/create", api_create_role, methods=["POST"]),
         Route("/api/agreement/roles/rename", api_rename_role, methods=["POST"]),
         Route(

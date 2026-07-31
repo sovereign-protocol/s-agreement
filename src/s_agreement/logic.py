@@ -82,6 +82,7 @@ class AgreementLogic:
             {},
         )
         if result.status == "ok":
+            identity = self._create_identity(result.value)
             decision = self._record_decision(
                 result.value, "accepted", None,
             )
@@ -89,7 +90,7 @@ class AgreementLogic:
             return SessionResult(
                 "ok",
                 value=result.value.uuid,
-                effects=[*result.effects, *decision.effects],
+                effects=[*result.effects, *identity.effects, *decision.effects],
             )
         return result
 
@@ -136,6 +137,7 @@ class AgreementLogic:
         # Creating the relationship is also an explicit acceptance of the
         # parent's new version. The child itself is a separately accepted
         # topic, recorded by its own decision item.
+        child_identity = self._create_identity(child)
         parent_decision = self._record_decision(
             self._node(parent.uuid, "agreement"), "accepted", None,
         )
@@ -147,6 +149,7 @@ class AgreementLogic:
             effects=[
                 *created.effects,
                 *linked.effects,
+                *child_identity.effects,
                 *parent_decision.effects,
                 *child_decision.effects,
             ],
@@ -340,6 +343,190 @@ class AgreementLogic:
             return allowed
         return self.session.move_child_to_index(clause_uuid, index)
 
+    # Identity is the one role whose holding is a single node rather than an
+    # offer plus a self-reported decision. It can be, because it is singular:
+    # everybody writes the holder into the same node, so the protocol's own
+    # semantics carry the consent. Both replicas naming the same holder is
+    # agreement; naming different holders is a divergence. Handover and a
+    # contested claim are therefore the same event, settled with the same
+    # adopt/rollback buttons every other node already has.
+    #
+    # It stays out of agreement_reference_hash deliberately: a handover
+    # changes who holds a role, not what the agreement says, and must not
+    # re-open everybody's acceptance.
+
+    def identity_holder(self, agreement: ProtocolNode) -> str:
+        """The actor this replica currently sees holding Identity."""
+        nodes = self._identity_nodes(agreement)
+        if len(nodes) != 1:
+            return ""
+        return str(nodes[0].data.get("holder_actor_uuid") or "").strip()
+
+    def holds_identity(self, agreement: ProtocolNode) -> bool:
+        return bool(
+            (holder := self.identity_holder(agreement))
+            and holder == self.session.identity.uuid
+        )
+
+    def take_identity(self, agreement_uuid: str) -> SessionResult:
+        """Install this participant as Identity.
+
+        Deliberately not gated on the seat being free. Somebody has to be
+        able to act when a holder is gone, and no rule evaluated against an
+        observer-relative view can tell "vacant" from "I do not sync with the
+        holder". Taking an occupied seat writes a competing holder into the
+        same node, which surfaces as a divergence for both sides to settle.
+        The warning belongs in the interface, not in a refusal here.
+        """
+        return self._write_identity(agreement_uuid, self.session.identity.uuid)
+
+    def offer_identity(
+        self, agreement_uuid: str, actor_uuid: str,
+    ) -> SessionResult:
+        """Hand Identity on. It is theirs once they adopt the node."""
+        agreement = self._node(agreement_uuid, "agreement")
+        if not agreement:
+            return SessionResult("error", reason="agreement not found")
+        if not self.holds_identity(agreement):
+            return SessionResult(
+                "error", reason="only the Identity holder can hand it over",
+            )
+        normalized = str(actor_uuid or "").strip()
+        if not normalized:
+            return SessionResult("error", reason="an actor is required")
+        if normalized == self.session.identity.uuid:
+            return SessionResult("error", reason="Identity is already yours")
+        return self._write_identity(agreement_uuid, normalized)
+
+    def _write_identity(
+        self, agreement_uuid: str, actor_uuid: str,
+    ) -> SessionResult:
+        agreement = self._node(agreement_uuid, "agreement")
+        if not agreement:
+            return SessionResult("error", reason="agreement not found")
+        allowed = self._interaction_guard(agreement)
+        if allowed.status != "ok":
+            return allowed
+        nodes = self._identity_nodes(agreement)
+        # Two records is the one case the single-node encoding cannot settle
+        # by itself, because two distinct nodes never diverge against each
+        # other. It is reachable only for an agreement that predates Identity
+        # and was then claimed on two sides at once, so it is surfaced rather
+        # than guessed at.
+        if len(nodes) > 1:
+            return SessionResult(
+                "error",
+                reason=(
+                    "This agreement has more than one Identity record. "
+                    "Settle that before changing it."
+                ),
+            )
+        if not nodes:
+            return self._create_identity(agreement, actor_uuid)
+        node = nodes[0]
+        data = dict(node.data)
+        data["holder_actor_uuid"] = actor_uuid
+        data["held_since"] = self._now()
+        return self.session.modify(node.uuid, data, node.weights)
+
+    def _create_identity(
+        self, agreement: ProtocolNode, actor_uuid: str | None = None,
+    ) -> SessionResult:
+        return self.session.create_child(
+            agreement.uuid,
+            {
+                "type": "agreement_identity",
+                "holder_actor_uuid": actor_uuid or self.session.identity.uuid,
+                "held_since": self._now(),
+            },
+            {},
+        )
+
+    @staticmethod
+    def _identity_nodes(agreement: ProtocolNode) -> list[ProtocolNode]:
+        return [
+            child for child in agreement.live_children()
+            if child.data.get("type") == "agreement_identity"
+        ]
+
+    def identity_payload(self, agreement: ProtocolNode) -> dict:
+        """Who holds Identity here, and what any peer says instead."""
+        blank = {
+            "node_uuid": "",
+            "holder_actor_uuid": "",
+            "holder_name": "",
+            "is_self": False,
+            "held_since": None,
+            "claims": [],
+        }
+        nodes = self._identity_nodes(agreement)
+        if len(nodes) > 1:
+            return {**blank, "state": "ambiguous"}
+        if not nodes:
+            return {**blank, "state": "vacant"}
+
+        people = self._topic_members(agreement.uuid)
+        members = {member["uuid"]: member for member in people}
+        uuid_for_address = {
+            address: member["uuid"]
+            for member in people
+            for address in member.get("addresses") or [member.get("address")]
+            if address
+        }
+
+        def describe(actor_uuid: str) -> str:
+            return (
+                (members.get(actor_uuid) or {}).get("name")
+                or "Someone you have not met"
+            )
+
+        node = nodes[0]
+        holder = str(node.data.get("holder_actor_uuid") or "").strip()
+        # What each peer's own copy of this node says. The view needs it to
+        # tell a handover - where the peer naming a new holder *is* that new
+        # holder - from a claim staked over somebody still in the seat.
+        claims = []
+        for address in self.session.peer_addresses(agreement.uuid):
+            peer_topic = self.session.get_cached_peer_subtree(
+                address, agreement.uuid,
+            )
+            if not peer_topic:
+                continue
+            peer_node = next(
+                (
+                    child for child in peer_topic.live_children()
+                    if child.uuid == node.uuid
+                ),
+                None,
+            )
+            if not peer_node:
+                continue
+            peer_holder = str(
+                peer_node.data.get("holder_actor_uuid") or "",
+            ).strip()
+            if peer_holder and peer_holder != holder:
+                claims.append({
+                    "peer_addr": address,
+                    "holder_actor_uuid": peer_holder,
+                    "holder_name": describe(peer_holder),
+                    # The same divergence means two different things. A peer
+                    # naming *itself* is accepting a handover; a peer naming
+                    # somebody else is staking a claim over whoever is still
+                    # in the seat.
+                    "is_handover": (
+                        uuid_for_address.get(address) == peer_holder
+                    ),
+                })
+        return {
+            "node_uuid": node.uuid,
+            "state": "held",
+            "holder_actor_uuid": holder,
+            "holder_name": describe(holder),
+            "is_self": holder == self.session.identity.uuid,
+            "held_since": node.data.get("held_since"),
+            "claims": claims,
+        }
+
     # Roles are document content: a role is part of what people agree to,
     # not administration layered on top of it. Accountabilities and domains
     # are the same shape - text plus order, owned by a role - so they share
@@ -526,6 +713,7 @@ class AgreementLogic:
     REACTABLE = frozenset({
         "agreement", "agreement_section", "agreement_clause", "agreement_link",
         "agreement_role", "agreement_accountability", "agreement_domain",
+        "agreement_identity",
     })
     OWNED_NODE_TYPES = frozenset({
         *REACTABLE, "agenda_item", "agreement_decision",
@@ -653,6 +841,10 @@ class AgreementLogic:
             "acceptances": (
                 self.acceptance_badges(selected.uuid) if selected else []
             ),
+            "identity": (
+                self.identity_payload(selected) if selected
+                else {"state": "vacant"}
+            ),
             "interaction": (
                 self.interaction_payload(selected) if selected else {
                     "allowed": False, "reason": "",
@@ -671,21 +863,31 @@ class AgreementLogic:
             ),
         }
 
-    @staticmethod
-    def _document_node_dict(node: ProtocolNode) -> dict:
-        """Serialize document content without internal decision records."""
+    # Records about the agreement rather than content of it. They have their
+    # own storage nodes and their own presentation - badges, an Identity line
+    # - so they stay out of the document serialization and are never rendered
+    # as document-change proposals. Their divergences are unaffected:
+    # transition events come from the protocol tree, not from this view.
+    NON_DOCUMENT_TYPES = frozenset({
+        "agreement_decision", "agreement_identity",
+    })
+
+    @classmethod
+    def _document_node_dict(cls, node: ProtocolNode) -> dict:
+        """Serialize document content without the records kept beside it."""
         payload = node.to_dict()
 
-        def remove_decisions(item: dict) -> None:
+        def remove_records(item: dict) -> None:
             children = [
                 child for child in item.get("children") or []
-                if child.get("data", {}).get("type") != "agreement_decision"
+                if child.get("data", {}).get("type")
+                not in cls.NON_DOCUMENT_TYPES
             ]
             item["children"] = children
             for child in children:
-                remove_decisions(child)
+                remove_records(child)
 
-        remove_decisions(payload)
+        remove_records(payload)
         return payload
 
     def document_snapshot(

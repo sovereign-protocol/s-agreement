@@ -498,6 +498,134 @@
       return null;
     };
 
+    // UI state that holds no focus, so the edit guard in render() cannot
+    // protect it and a rebuild would close it. Kept here rather than in the
+    // DOM so a full re-render restores it instead of destroying it.
+    const ephemeral = {openMenu: ''};
+
+    // Identity is one line, not a panel: it says who speaks for this
+    // agreement and gets out of the way. Taking it from somebody is real but
+    // rare, so it lives behind the overflow rather than as a button.
+    const renderIdentity = (identity, interactive) => {
+      const line = document.createElement('div');
+      line.className = 'identity-line';
+      const claims = identity.claims || [];
+      const state = claims.length ? 'contested' : (identity.state || 'vacant');
+      line.dataset.state = state;
+
+      const mark = document.createElement('span');
+      mark.className = 'identity-mark';
+      mark.textContent = state === 'held' ? '\u{1F511}' : '⚠';
+
+      const text = document.createElement('span');
+      text.className = 'identity-text';
+      if (state === 'ambiguous') {
+        text.textContent =
+          'Identity is recorded twice here. Settle that before changing it.';
+      } else if (state === 'vacant') {
+        text.textContent = 'Identity: nobody yet';
+      } else if (!claims.length) {
+        text.textContent = `Identity: ${identity.holder_name}`;
+      } else {
+        // One competing record, two meanings - say which one this is. The
+        // holder reads as "you" when it is you, or the sentence turns into
+        // "you see You".
+        const handover = claims.every(claim => claim.is_handover);
+        const others = claims.map(claim => claim.holder_name).join(', ');
+        const here = identity.is_self
+          ? 'you still hold it' : `you see ${identity.holder_name}`;
+        text.textContent = handover
+          ? `Identity handover: ${others} has taken it, ${here}`
+          : `Identity contested: ${here}, elsewhere ${others}`;
+      }
+
+      const actions = document.createElement('span');
+      actions.className = 'identity-actions';
+
+      const transition = identity.node_uuid
+        ? payloadState.transition_by_node?.[identity.node_uuid]
+        : null;
+      if (interactive && claims.length && transition?.peer_addr) {
+        const theirs = document.createElement('button');
+        theirs.type = 'button';
+        theirs.textContent = `Accept ${claims[0].holder_name}`;
+        theirs.onclick = async () => {
+          try {
+            await api('/api/agreement/react', {
+              node_uuid: identity.node_uuid,
+              source_addr: transition.peer_addr,
+              reaction: 'adopt',
+            });
+            await load();
+            showToast('Identity updated');
+          } catch (error) { showToast(error.message, true); }
+        };
+        const mine = document.createElement('button');
+        mine.type = 'button';
+        mine.textContent =
+          `Keep ${identity.is_self ? 'yours' : identity.holder_name}`;
+        mine.onclick = async () => {
+          try {
+            await api('/api/agreement/react', {
+              node_uuid: identity.node_uuid,
+              source_addr: transition.peer_addr,
+              reaction: 'rollback',
+            });
+            await load();
+            showToast('Kept your version');
+          } catch (error) { showToast(error.message, true); }
+        };
+        actions.append(theirs, mine);
+      }
+
+      if (interactive && state !== 'ambiguous' && !identity.is_self) {
+        const menuKey = `identity:${current?.uuid || ''}`;
+        const menu = document.createElement('span');
+        menu.className = 'identity-menu';
+        menu.classList.toggle('is-open', ephemeral.openMenu === menuKey);
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'identity-toggle';
+        toggle.textContent = '⋯';
+        toggle.title = 'Identity options';
+        toggle.onclick = () => {
+          const open = ephemeral.openMenu === menuKey;
+          ephemeral.openMenu = open ? '' : menuKey;
+          menu.classList.toggle('is-open', !open);
+        };
+        const take = document.createElement('button');
+        take.type = 'button';
+        take.className = 'identity-take';
+        take.textContent = 'Take Identity';
+        take.onclick = () => {
+          const run = async () => {
+            try {
+              await api('/api/agreement/identity/take',
+                {agreement_uuid: current.uuid});
+              ephemeral.openMenu = '';
+              await load();
+              showToast('You now hold Identity');
+            } catch (error) { showToast(error.message, true); }
+          };
+          if (state === 'vacant') { run(); return; }
+          document.querySelector('#confirmModalConfirmBtn').textContent =
+            'Take Identity';
+          confirmAction(
+            'Take Identity from ' + identity.holder_name + '?',
+            identity.holder_name + ' currently holds Identity. Taking it '
+            + 'writes a competing holder into the same record, which both of '
+            + 'you will see as a divergence until one of you settles it.',
+            run,
+          );
+        };
+        menu.append(toggle, take);
+        actions.append(menu);
+      }
+
+      line.append(mark, text, actions);
+      return line;
+    };
+
     // Accountabilities and domains differ only in what they are called, so
     // one card renders both columns from this table.
     const ROLE_ITEM_KINDS = [
@@ -724,6 +852,9 @@
         );
         article.append(notice);
       }
+      article.append(renderIdentity(
+        payload.identity || {state: 'vacant'}, currentInteractionAllowed,
+      ));
       article.append(renderAcceptances(
         payload.acceptances,
         currentInteractionAllowed,

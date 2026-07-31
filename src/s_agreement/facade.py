@@ -34,6 +34,18 @@ class AgreementFacade:
     ) -> list[ProtocolNode]:
         return self._logic.subagreement_links(agreement)
 
+    def identity_holder(self, agreement: ProtocolNode) -> str:
+        return self._logic.identity_holder(agreement)
+
+    def identity(self, agreement: ProtocolNode) -> dict:
+        return self._logic.identity_payload(agreement)
+
+    def take_identity(self, agreement_uuid: str):
+        return self._logic.take_identity(agreement_uuid)
+
+    def offer_identity(self, agreement_uuid: str, actor_uuid: str):
+        return self._logic.offer_identity(agreement_uuid, actor_uuid)
+
     def roles(self, agreement: ProtocolNode) -> list[ProtocolNode]:
         return self._logic.roles(agreement)
 

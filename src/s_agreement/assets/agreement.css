@@ -380,6 +380,45 @@ h2.element-label { margin: 0 0 4px; }
 .editable:hover { background: var(--hover); }
 .editable:focus { outline: 2px solid var(--proposal); outline-offset: 1px; background: var(--hover); }
 
+/* Identity is a line, not a panel: who speaks for this agreement, stated
+   once and then out of the way. It only raises its voice when contested. */
+.identity-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 4px 4px 22px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.identity-line[data-state="contested"],
+.identity-line[data-state="ambiguous"] {
+  background: rgba(220, 38, 38, 0.15);
+  color: var(--text);
+}
+.identity-line[data-state="vacant"] { font-style: italic; }
+.identity-mark { font-size: 12px; }
+.identity-text { flex: 1; min-width: 0; }
+.identity-actions { display: inline-flex; align-items: center; gap: 6px; }
+.identity-actions button { font-size: 12px; padding: 4px 8px; }
+/* Taking Identity from somebody is real but rare, so it is never a primary
+   button - it waits behind the overflow until it is asked for. */
+.identity-menu { position: relative; display: inline-flex; }
+.identity-toggle { border: none; padding: 2px 6px; opacity: 0.7; }
+.identity-toggle:hover { opacity: 1; }
+.identity-take { display: none; }
+.identity-menu.is-open .identity-take {
+  display: inline-block;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  white-space: nowrap;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  z-index: 2;
+}
+
 /* Roles live in the document below the prose. Cards rather than paragraphs,
    because they are structured - but on the article's own surface, because
    they are still part of what is being accepted, not an admin panel bolted

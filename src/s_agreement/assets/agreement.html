@@ -327,6 +327,16 @@
           ? `${(item.members || []).length} ${(item.members || []).length === 1 ? 'person' : 'people'}`
           : 'Not joined';
         row.append(button, count);
+        // The tree is drawn through home, so any other seat this agreement
+        // holds would otherwise be invisible - and an unseen second parent
+        // is a trap for whoever deletes the first.
+        if ((item.other_parents || []).length) {
+          const also = document.createElement('span');
+          also.className = 'other-parents';
+          also.textContent = 'also in: '
+            + item.other_parents.map(other => other.title).join(', ');
+          row.append(also);
+        }
         if (item.relationship_status === 'awaiting_parent_agreement') {
           const pending = document.createElement('span');
           pending.className = 'relationship-pending';
@@ -628,6 +638,80 @@
       unobserved: 'answer not visible from here',
     };
 
+    // Which agreements this one holds a seat in, in the order that decides
+    // where it is drawn. Home is the first that works, so reordering is how
+    // you say where it belongs - there is no home to set, only a preference.
+    const renderSeats = (parents, interactive) => {
+      const seats = parents || [];
+      const section = document.createElement('section');
+      section.className = 'seats';
+      if (!seats.length) return section;
+      const heading = document.createElement('div');
+      heading.className = 'roles-heading';
+      const title = document.createElement('h3');
+      title.textContent = 'Seats held';
+      const explanation = document.createElement('p');
+      explanation.textContent = seats.length > 1
+        ? 'Drawn under the first that works. Reorder to prefer another.'
+        : 'Where this agreement sits.';
+      heading.append(title, explanation);
+      section.append(heading);
+
+      seats.forEach((seat, index) => {
+        const row = document.createElement('div');
+        row.className = 'seat';
+        row.dataset.state = seat.live
+          ? (seat.is_home ? 'home' : 'live') : 'blocked';
+        const name = document.createElement('span');
+        name.className = 'seat-name';
+        name.textContent = seat.role_name
+          ? `${seat.role_name} in ${seat.title}`
+          : seat.title;
+        if (seat.joined) {
+          name.classList.add('agreement-link');
+          name.tabIndex = 0;
+          const open = () => selectAgreement(seat.agreement_uuid);
+          name.onclick = open;
+          name.onkeydown = event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              open();
+            }
+          };
+        }
+        const state = document.createElement('span');
+        state.className = 'seat-state';
+        state.textContent = seat.is_home
+          ? 'home' : (seat.live ? 'also here' : 'not reachable');
+        row.append(name, state);
+        // Reordering is the agreement's own say in where it belongs, so it
+        // belongs to whoever speaks for it.
+        if (interactive && payloadState.holds_identity && seats.length > 1) {
+          const move = (delta, label, disabled) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'element-move';
+            button.textContent = label;
+            button.disabled = disabled;
+            button.onclick = async () => {
+              try {
+                await api('/api/agreement/parents/move',
+                  {holding_uuid: seat.holding_uuid, index: index + delta});
+                await load();
+              } catch (error) { showToast(error.message, true); }
+            };
+            return button;
+          };
+          row.append(
+            move(-1, '\u2191', index === 0),
+            move(1, '\u2193', index === seats.length - 1),
+          );
+        }
+        section.append(row);
+      });
+      return section;
+    };
+
     // Accountabilities and domains differ only in what they are called, so
     // one card renders both columns from this table.
     const ROLE_ITEM_KINDS = [
@@ -847,9 +931,17 @@
 
       // Inviting is the Identity holder's alone.
       if (interactive && payloadState.holds_identity) {
-        const offered = new Set(holders.map(holder => holder.actor_uuid));
-        const candidates = (payloadState.known_identities || [])
-          .filter(person => !offered.has(person.uuid));
+        // A withdrawn offer is re-offerable - offer_role revives the same
+        // record - so only a standing one takes somebody out of the list. A
+        // request is left out too, because Confirm on their row is how that
+        // one is answered.
+        const spoken = new Set(
+          holders
+            .filter(holder => holder.status !== 'revoked')
+            .map(holder => holder.actor_uuid),
+        );
+        const candidates = (payloadState.offerable_actors || [])
+          .filter(actor => !spoken.has(actor.uuid));
         if (candidates.length) {
           const picker = document.createElement('select');
           picker.className = 'role-offer-picker';
@@ -857,21 +949,46 @@
           blank.value = '';
           blank.textContent = 'Offer to\u2026';
           picker.append(blank);
-          for (const person of candidates) {
+          const groups = {
+            individual: document.createElement('optgroup'),
+            agreement: document.createElement('optgroup'),
+          };
+          groups.individual.label = 'People';
+          groups.agreement.label = 'Agreements';
+          for (const actor of candidates) {
             const option = document.createElement('option');
-            option.value = person.uuid;
+            option.value = actor.uuid;
             // A profile with no display name falls back to an address, which
             // is a poor way to be told about yourself.
-            option.textContent = person.uuid === payloadState.identity_uuid
+            option.textContent = actor.uuid === payloadState.identity_uuid
               ? 'You'
-              : (person.name || person.address);
-            picker.append(option);
+              : actor.name;
+            groups[actor.kind === 'agreement' ? 'agreement' : 'individual']
+              .append(option);
           }
+          for (const group of Object.values(groups)) {
+            if (group.childElementCount) picker.append(group);
+          }
+          // Structure is made by filling a seat, so a seat can also be filled
+          // by an agreement that does not exist yet.
+          const fresh = document.createElement('option');
+          fresh.value = '__new__';
+          fresh.textContent = 'A new agreement\u2026';
+          picker.append(fresh);
           picker.onchange = async () => {
             if (!picker.value) return;
+            const chosen = picker.value;
+            picker.value = '';
             try {
-              await api('/api/agreement/roles/offer',
-                {role_uuid: role.uuid, actor_uuid: picker.value});
+              if (chosen === '__new__') {
+                const title = prompt(`Name the agreement to fill ${role.data.name}`);
+                if (!title || !title.trim()) return;
+                await api('/api/agreement/roles/seat_new',
+                  {role_uuid: role.uuid, title: title.trim()});
+              } else {
+                await api('/api/agreement/roles/offer',
+                  {role_uuid: role.uuid, actor_uuid: chosen});
+              }
               await load();
             } catch (error) { showToast(error.message, true); }
           };
@@ -921,19 +1038,6 @@
           await api('/api/agreement/roles/create',
             {agreement_uuid: agreement.uuid, name});
         }));
-        // Structure is made by filling a seat, so creating a subagreement
-        // lives here beside the roles rather than in a section of its own.
-        if (payloadState.holds_role) {
-          section.append(composer(
-            'New subagreement name',
-            async title => {
-              await api('/api/agreement/agreements/create_subagreement', {
-                parent_agreement_uuid: agreement.uuid,
-                title,
-              });
-            },
-          ));
-        }
       }
       return section;
     };
@@ -1018,6 +1122,7 @@
             && !(identityState.claims || []).length)) {
         article.append(renderIdentity(identityState, currentInteractionAllowed));
       }
+      article.append(renderSeats(payload.parents, currentInteractionAllowed));
       article.append(renderParticipants(
         payload.participants, payload.identity, currentInteractionAllowed,
       ));

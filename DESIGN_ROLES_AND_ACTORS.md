@@ -411,13 +411,28 @@ Three things this surfaced:
   invited subtree is not in the local index yet, which is the entire point
   of checking it.
 
-### Step 3b — Multiple parents
+### Step 3b — Multiple parents **[DONE]**
+
+An agreement may hold seats in several others. `_ancestry_problem` became an
+ANY-path DFS over the holding graph, cycle-safe; home is the first holding in
+order whose path validates, derived on read; `seat_agreement` and
+`create_seated_agreement` fill a seat with an existing or a new agreement,
+both refusing anything that would close a loop.
+
+**The org view stayed a tree.** An earlier draft of this plan called that the
+biggest UI change of the whole thing, which was written before home existed
+and was wrong afterwards: home edges are a subset of holding edges with at
+most one per agreement over a DAG, so the projection is a forest and
+`renderOrganization` needed no restructuring at all (2.5). The DAG never
+reaches the tree renderer. What it did need is the two markers that keep the
+projection honest - `also in:` on a row whose other seats home leaves out,
+and a *Seats held* list on the agreement's own page where the order is set.
+
 
 The graph step. Highest risk — schedule it alone.
 
 | Site | Now | Becomes |
 |---|---|---|
-| `parent_holdings` | one holding per agreement | several, ordered |
 | `_check_parent_chain` | `while parent_uuid:` | DFS, ANY valid path, cycle-safe |
 | `_interaction_guard` | linear walk | same DFS, memoized |
 | `organization_payload` | `parent_for: dict[str,str]`; second link silently dropped; `build()` recurses a tree | holding graph projected through derived home |

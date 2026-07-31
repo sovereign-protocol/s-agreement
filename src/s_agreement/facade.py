@@ -80,6 +80,21 @@ class AgreementFacade:
     def resign_role(self, role_uuid: str):
         return self._logic.resign_role(role_uuid)
 
+    def seat_agreement(self, role_uuid: str, agreement_uuid: str):
+        return self._logic.seat_agreement(role_uuid, agreement_uuid)
+
+    def unseat_agreement(self, role_uuid: str, agreement_uuid: str):
+        return self._logic.unseat_agreement(role_uuid, agreement_uuid)
+
+    def create_seated_agreement(self, role_uuid: str, title: str):
+        return self._logic.create_seated_agreement(role_uuid, title)
+
+    def parents(self, agreement: ProtocolNode) -> list[dict]:
+        return self._logic.parent_payload(agreement)
+
+    def home_parent_uuid(self, agreement: ProtocolNode) -> str:
+        return self._logic.home_parent_uuid(agreement)
+
     def organization(self) -> dict:
         return self._logic.organization_payload()
 

@@ -1195,6 +1195,127 @@ class AgreementLogicTests(unittest.TestCase):
         sync(left, right)
         self.assertEqual(status_from_left(), "refused")
 
+    def two_parents(self, runtime, ports):
+        """An agreement seated in two others, Alpha first."""
+        alpha = runtime.logic.create_agreement("Alpha").value
+        beta = runtime.logic.create_agreement("Beta").value
+        circle = runtime.logic.create_subagreement(alpha, "Circle").value
+        seat = runtime.logic.create_role(beta, "Delegate").value
+        self.assertEqual(
+            runtime.logic.offer_role(seat, circle).status, "ok",
+        )
+        self.assertEqual(
+            runtime.logic.seat_agreement(seat, circle).status, "ok",
+        )
+        return alpha, beta, circle
+
+    def test_one_parent_going_invalid_does_not_close_a_second_one(self):
+        # ANY path, not all: holding a seat in two agreements means either
+        # can carry it, so one parent lapsing suspends that relationship
+        # rather than paralysing a body the other still depends on.
+        runtime = self.runtime(9514)
+        alpha, beta, circle = self.two_parents(runtime, None)
+
+        def writable():
+            return runtime.logic.interaction_payload(
+                runtime.session.protocol.index[circle],
+            )["allowed"]
+
+        self.assertTrue(writable())
+        self.leave(runtime, alpha)
+        self.assertTrue(writable())
+        self.leave(runtime, beta)
+        self.assertFalse(writable())
+        # And it comes back through whichever parent recovers.
+        self.rejoin(runtime, beta)
+        self.assertTrue(writable())
+
+    def test_home_is_the_first_seat_that_works_and_falls_back(self):
+        runtime = self.runtime(9515)
+        alpha, beta, circle = self.two_parents(runtime, None)
+
+        def home():
+            return runtime.logic.home_parent_uuid(
+                runtime.session.protocol.index[circle],
+            )
+
+        self.assertEqual(home(), alpha)
+        # Home is derived, so it moves on when the first seat stops working
+        # and moves back when it recovers - there is no stored home to
+        # disagree with the holdings.
+        self.leave(runtime, alpha)
+        self.assertEqual(home(), beta)
+        self.rejoin(runtime, alpha)
+        self.assertEqual(home(), alpha)
+        # With no seat working there is no home, and it draws as a root.
+        self.leave(runtime, alpha)
+        self.leave(runtime, beta)
+        self.assertEqual(home(), "")
+
+    def test_reordering_the_seats_changes_where_it_is_drawn(self):
+        runtime = self.runtime(9516)
+        alpha, beta, circle = self.two_parents(runtime, None)
+        holdings = runtime.logic.parent_holdings(
+            runtime.session.protocol.index[circle],
+        )
+        self.assertEqual(len(holdings), 2)
+
+        self.assertEqual(
+            runtime.logic.move_parent_holding(holdings[1].uuid, 0).status, "ok",
+        )
+        self.assertEqual(
+            runtime.logic.home_parent_uuid(
+                runtime.session.protocol.index[circle],
+            ),
+            beta,
+        )
+
+    def test_the_organization_is_drawn_through_home_and_names_the_rest(self):
+        runtime = self.runtime(9517)
+        alpha, beta, circle = self.two_parents(runtime, None)
+
+        organization = runtime.logic.organization_payload()
+        roots = {item["uuid"]: item for item in organization["roots"]}
+        # Drawn once, under home, with the other seat named rather than
+        # hidden - a second parent nobody can see is a trap for whoever
+        # deletes the first.
+        self.assertEqual(set(roots), {alpha, beta})
+        self.assertEqual(
+            [child["uuid"] for child in roots[alpha]["children"]], [circle],
+        )
+        self.assertEqual(roots[beta]["children"], [])
+        drawn = roots[alpha]["children"][0]
+        self.assertEqual(drawn["home_parent_uuid"], alpha)
+        self.assertEqual(
+            [item["uuid"] for item in drawn["other_parents"]], [beta],
+        )
+
+    def test_a_seat_that_would_close_a_loop_is_refused(self):
+        # Best-effort per replica, and best effort is still worth making.
+        runtime = self.runtime(9518)
+        alpha = runtime.logic.create_agreement("Alpha").value
+        circle = runtime.logic.create_subagreement(alpha, "Circle").value
+        inner = runtime.logic.create_subagreement(circle, "Inner").value
+
+        seat = runtime.logic.create_role(inner, "Upward").value
+        self.assertEqual(runtime.logic.offer_role(seat, alpha).status, "ok")
+        looped = runtime.logic.seat_agreement(seat, alpha)
+
+        self.assertEqual(looped.status, "error")
+        self.assertIn("circular", looped.reason)
+
+    def test_only_the_seated_agreements_identity_holder_may_take_a_seat(self):
+        left, right = self.runtime(9519), self.runtime(9520)
+        alpha = left.logic.create_agreement("Alpha").value
+        circle = left.logic.create_subagreement(alpha, "Circle").value
+        beta = right.logic.create_agreement("Beta").value
+        seat = right.logic.create_role(beta, "Delegate").value
+
+        # right holds Beta's Identity, but not Circle's, and cannot answer
+        # for a body that is not theirs to speak for.
+        refused = right.logic.seat_agreement(seat, circle)
+        self.assertEqual(refused.status, "error")
+
     def test_the_creator_holds_identity_of_what_they_create(self):
         runtime = self.runtime(9488)
         agreement_uuid = runtime.logic.create_agreement("Charter").value

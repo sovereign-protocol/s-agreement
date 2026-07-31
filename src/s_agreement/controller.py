@@ -155,6 +155,30 @@ def build_routes(logic, runtime) -> list[Route]:
             runtime, logic.resign_role(data["role_uuid"]),
         )
 
+    async def api_seat_agreement(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.seat_agreement(
+            data["role_uuid"], data.get("agreement_uuid", ""),
+        ))
+
+    async def api_unseat_agreement(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.unseat_agreement(
+            data["role_uuid"], data.get("agreement_uuid", ""),
+        ))
+
+    async def api_create_seated_agreement(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.create_seated_agreement(
+            data["role_uuid"], data.get("title", ""),
+        ))
+
+    async def api_move_parent(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.move_parent_holding(
+            data["holding_uuid"], int(data.get("index", 0)),
+        ))
+
     async def api_create_role_item(request: Request):
         data = await request.json()
         return await _json_result(runtime, logic.create_role_item(
@@ -258,6 +282,18 @@ def build_routes(logic, runtime) -> list[Route]:
         Route("/api/agreement/roles/delete", api_delete_role, methods=["POST"]),
         Route("/api/agreement/roles/move", api_move_role, methods=["POST"]),
         Route("/api/agreement/roles/offer", api_offer_role, methods=["POST"]),
+        Route("/api/agreement/roles/seat", api_seat_agreement, methods=["POST"]),
+        Route(
+            "/api/agreement/roles/unseat",
+            api_unseat_agreement,
+            methods=["POST"],
+        ),
+        Route(
+            "/api/agreement/roles/seat_new",
+            api_create_seated_agreement,
+            methods=["POST"],
+        ),
+        Route("/api/agreement/parents/move", api_move_parent, methods=["POST"]),
         Route("/api/agreement/roles/revoke", api_revoke_role, methods=["POST"]),
         Route("/api/agreement/roles/decide", api_decide_role, methods=["POST"]),
         Route("/api/agreement/roles/resign", api_resign_role, methods=["POST"]),

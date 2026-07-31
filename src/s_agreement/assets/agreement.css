@@ -503,3 +503,29 @@ h2.element-label { margin: 0 0 4px; }
   .acceptance-heading { display: block; }
   .acceptance-heading p { margin-top: 4px; }
 }
+
+/* Which agreements this one holds a seat in. Home is derived from this
+   order, so the list is the control: there is no home to set, only a
+   preference between seats that work. */
+.seats { margin: 12px 0 4px; padding: 10px 4px 8px; }
+.seat {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-left: 22px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.seat-name { font-weight: 600; }
+.seat-state { color: var(--text-muted); font-size: 11px; }
+.seat[data-state="home"] .seat-state { color: var(--proposal); }
+.seat[data-state="blocked"] .seat-name,
+.seat[data-state="blocked"] .seat-state { opacity: 0.6; }
+.seat[data-state="blocked"] .seat-state { color: #f59e0b; }
+.seat .element-move { opacity: 1; }
+/* A seat home leaves out still has to be visible in the tree. */
+.other-parents {
+  grid-column: 1 / -1;
+  color: var(--text-muted);
+  font-size: 11px;
+}

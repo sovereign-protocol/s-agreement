@@ -362,8 +362,8 @@
           const state = document.createElement('span');
           state.className = 'state-badge';
           state.dataset.state = item.state;
-          state.textContent = STATE_BADGE[item.state].label;
-          state.title = STATE_BADGE[item.state].title;
+          state.textContent = TEMPLATE_BADGE.label;
+          state.title = TEMPLATE_BADGE.title;
           row.append(state);
         }
         // The tree is drawn through home, so any other seat this agreement
@@ -431,7 +431,7 @@
       const heading = document.createElement('div');
       heading.className = 'acceptance-heading';
       const title = document.createElement('h3');
-      title.textContent = 'Participants';
+      title.textContent = 'Actors';
       const reference = document.createElement('p');
       reference.textContent =
         'Each role is accepted against a version of this agreement.';
@@ -509,10 +509,147 @@
         return row;
       };
 
+      // This agreement is an actor too, and the roles it holds elsewhere are
+      // roles like any other - so they are badges on its own line, read and
+      // acted on exactly as yours are. There is no separate idea of a seat:
+      // "Operations in Cooperative" is one role, named by where it is.
+      const ownRow = () => {
+        const seats = payloadState.parents || [];
+        const offers = payloadState.seat_offers || [];
+        if (!seats.length && !offers.length) return null;
+        const row = document.createElement('div');
+        row.className = 'participant is-agreement';
+        row.append(avatarFor({actor_kind: 'agreement'}));
+        const body = document.createElement('span');
+        body.className = 'acceptance-body';
+        const name = document.createElement('strong');
+        name.textContent = 'This agreement';
+        const chips = document.createElement('span');
+        chips.className = 'participant-roles';
+        // Whoever speaks for the agreement answers for it, so the badges act
+        // only for them. For everybody else they state where it stands.
+        const mine = interactive && payloadState.holds_identity;
+        for (const [index, seat] of seats.entries()) {
+          chips.append(seatChip(seat, index, seats.length, mine));
+        }
+        for (const offer of offers) chips.append(offerChip(offer, mine));
+        body.append(name, chips);
+        row.append(body);
+        return row;
+      };
+
+      // Held. Clicking steps out of it, the way your own accepted badge does.
+      const seatChip = (seat, index, total, mine) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'role-chip';
+        chip.dataset.status = seat.live ? 'accepted' : 'outdated';
+        chip.textContent = `${seat.role_name || 'Role'} in ${seat.title}`;
+        // Home is where the organisation draws it, and home is the first
+        // seat in order that works - so the order is the only control there
+        // is, and it lives on the badges themselves.
+        const place = seat.is_home
+          ? 'drawn here'
+          : (seat.live ? 'also held here' : 'not reachable from here');
+        if (!mine) {
+          chip.disabled = true;
+          chip.title = `${chip.textContent} — ${place}`;
+          return chip;
+        }
+        chip.title = `${chip.textContent} — ${place}. Click to step out.`;
+        chip.onclick = async () => {
+          chip.disabled = true;
+          try {
+            await api('/api/agreement/roles/unseat', {
+              role_uuid: seat.role_uuid, agreement_uuid: current.uuid,
+            });
+            await load();
+          } catch (error) {
+            chip.disabled = false;
+            showToast(error.message, true);
+          }
+        };
+        if (index > 0 && total > 1) {
+          const prefer = document.createElement('span');
+          prefer.className = 'chip-action';
+          prefer.textContent = '↑';
+          prefer.title = `Draw this agreement under ${seat.title}`;
+          prefer.onclick = async event => {
+            event.stopPropagation();
+            try {
+              await api('/api/agreement/parents/move',
+                {holding_uuid: seat.holding_uuid, index: 0});
+              await load();
+            } catch (error) { showToast(error.message, true); }
+          };
+          chip.append(prefer);
+        }
+        return chip;
+      };
+
+      // Offered. Clicking takes it, the way your own pending badge does.
+      const offerChip = (offer, mine) => {
+        const chip = document.createElement('button');
+        chip.type = 'button';
+        chip.className = 'role-chip';
+        chip.dataset.status = offer.answer === 'refused' ? 'refused' : 'pending';
+        chip.textContent = `${offer.role_name} in ${offer.title}`;
+        const label = offer.answer === 'refused'
+          ? 'turned down' : 'offered, not yet taken';
+        if (offer.circular) {
+          chip.disabled = true;
+          chip.dataset.status = 'expired';
+          chip.title = `${chip.textContent} — ${offer.title} already sits`
+            + ' below this agreement, so taking it would make the'
+            + ' organisation circular.';
+          return chip;
+        }
+        if (!mine) {
+          chip.disabled = true;
+          chip.title = `${chip.textContent} — ${label}`;
+          return chip;
+        }
+        chip.title = `${chip.textContent} — ${label}. Click to take it.`;
+        chip.onclick = async () => {
+          chip.disabled = true;
+          try {
+            await api('/api/agreement/roles/seat', {
+              role_uuid: offer.role_uuid, agreement_uuid: current.uuid,
+            });
+            await load();
+            showToast(`Now holding ${offer.role_name} in ${offer.title}`);
+          } catch (error) {
+            chip.disabled = false;
+            showToast(error.message, true);
+          }
+        };
+        // Turning an invitation down is the only thing here that is not
+        // simply taking or leaving a role, so it is the one extra mark.
+        if (offer.answer !== 'refused') {
+          const decline = document.createElement('span');
+          decline.className = 'chip-action';
+          decline.textContent = '×';
+          decline.title = `Decline ${offer.role_name} in ${offer.title}`;
+          decline.onclick = async event => {
+            event.stopPropagation();
+            try {
+              await api('/api/agreement/roles/decline_seat', {
+                role_uuid: offer.role_uuid, agreement_uuid: current.uuid,
+              });
+              await load();
+            } catch (error) { showToast(error.message, true); }
+          };
+          chip.append(decline);
+        }
+        return chip;
+      };
+
       const people = participants || [];
       const me = people.find(person => person.is_self);
       const others = people.filter(person => !person.is_self);
       if (me) section.append(rowFor(me, interactive));
+      const own = ownRow();
+      if (own) section.append(own);
       if (others.length) {
         const rest = document.createElement('div');
         rest.className = 'acceptance-badges';
@@ -681,222 +818,15 @@
       unobserved: 'answer not visible from here',
     };
 
-    // Which agreements this one holds a seat in, in the order that decides
-    // where it is drawn. Home is the first that works, so reordering is how
-    // you say where it belongs - there is no home to set, only a preference.
-    // Template, instantiated or working is a count of actors, not a kind of
-    // agreement, so this line reports a situation rather than a setting -
-    // there is nothing here to switch. A working agreement says nothing,
-    // being the ordinary case.
-    const STATE_BADGE = {
-      template: {
-        label: 'Template',
-        title: 'Nobody holds a role here.',
-        note: 'Nobody holds a role here yet. Take Identity to start using it.',
-      },
-      instantiated: {
-        label: 'One actor',
-        title: 'Only one actor holds a role here.',
-        note: 'Only one actor holds a role here, so nothing is agreed'
-          + ' between anybody yet.',
-      },
-    };
-
-    // Copying lives where a new agreement is made - the cockpit's "New
-    // agreement" flow offers this one as a starting point, the same way a
-    // new board does - rather than here, where it would be an action about
-    // some other agreement sitting on this one's page.
-    const renderState = (state) => {
-      const line = document.createElement('p');
-      line.className = 'agreement-state';
-      const badge = STATE_BADGE[state];
-      if (!badge) return null;
-      const chip = document.createElement('span');
-      chip.className = 'state-badge';
-      chip.dataset.state = state;
-      chip.textContent = badge.label;
-      chip.title = badge.title;
-      const note = document.createElement('span');
-      note.className = 'state-note';
-      note.textContent = badge.note;
-      line.append(chip, note);
-      return line;
-    };
-
-    // A seat offered to this agreement is written on the parent's page, but
-    // the only person who may answer it is whoever holds this agreement's
-    // Identity - who need not be looking at the parent, or joined to it at
-    // all. So the invitation is brought here, next to the seats it would
-    // join.
-    const renderSeatOffers = (offers, interactive) => {
-      const section = document.createElement('section');
-      section.className = 'seat-offers';
-      if (!offers.length) return section;
-      const heading = document.createElement('div');
-      heading.className = 'roles-heading';
-      const title = document.createElement('h3');
-      title.textContent = 'Invited to';
-      const explanation = document.createElement('p');
-      explanation.textContent = payloadState.holds_identity
-        ? 'Roles this agreement has been offered. You speak for it, so the'
-          + ' answer is yours.'
-        : 'Roles this agreement has been offered. Its Identity holder'
-          + ' answers these.';
-      heading.append(title, explanation);
-      section.append(heading);
-
-      for (const offer of offers) {
-        const row = document.createElement('div');
-        row.className = 'seat-offer';
-        row.dataset.state = offer.answer || 'unanswered';
-        const name = document.createElement('span');
-        name.className = 'seat-name agreement-link';
-        name.textContent = `${offer.role_name} in ${offer.title}`;
-        name.tabIndex = 0;
-        name.title = offer.role_purpose
-          ? `${offer.role_purpose} — open ${offer.title}`
-          : `Open ${offer.title}`;
-        const open = () => selectAgreement(offer.agreement_uuid);
-        name.onclick = open;
-        name.onkeydown = event => {
-          if (event.key === 'Enter' || event.key === ' ') {
-            event.preventDefault();
-            open();
-          }
-        };
-        row.append(name);
-        if (offer.answer === 'refused') {
-          const state = document.createElement('span');
-          state.className = 'seat-state';
-          state.textContent = 'declined';
-          state.title = 'This agreement turned the seat down. Accept to'
-            + ' change that.';
-          row.append(state);
-        }
-        if (offer.circular) {
-          const state = document.createElement('span');
-          state.className = 'seat-state';
-          state.textContent = 'would loop';
-          state.title = `${offer.title} already sits below this agreement,`
-            + ' so taking this seat would make the organisation circular.';
-          row.append(state);
-        }
-        if (interactive && payloadState.holds_identity && !offer.circular) {
-          const accept = document.createElement('button');
-          accept.type = 'button';
-          accept.className = 'seat-accept';
-          accept.textContent = 'Accept';
-          accept.onclick = async () => {
-            accept.disabled = true;
-            try {
-              await api('/api/agreement/roles/seat', {
-                role_uuid: offer.role_uuid,
-                agreement_uuid: current.uuid,
-              });
-              await load();
-              showToast(`Now holding ${offer.role_name} in ${offer.title}`);
-            } catch (error) {
-              accept.disabled = false;
-              showToast(error.message, true);
-            }
-          };
-          row.append(accept);
-        }
-        if (interactive && payloadState.holds_identity
-            && offer.answer !== 'refused') {
-          const decline = document.createElement('button');
-          decline.type = 'button';
-          decline.className = 'seat-decline';
-          decline.textContent = 'Decline';
-          decline.onclick = async () => {
-            decline.disabled = true;
-            try {
-              await api('/api/agreement/roles/decline_seat', {
-                role_uuid: offer.role_uuid,
-                agreement_uuid: current.uuid,
-              });
-              await load();
-            } catch (error) {
-              decline.disabled = false;
-              showToast(error.message, true);
-            }
-          };
-          row.append(decline);
-        }
-        section.append(row);
-      }
-      return section;
-    };
-
-    const renderSeats = (parents, interactive) => {
-      const seats = parents || [];
-      const section = document.createElement('section');
-      section.className = 'seats';
-      if (!seats.length) return section;
-      const heading = document.createElement('div');
-      heading.className = 'roles-heading';
-      const title = document.createElement('h3');
-      title.textContent = 'Seats held';
-      const explanation = document.createElement('p');
-      explanation.textContent = seats.length > 1
-        ? 'Drawn under the first that works. Reorder to prefer another.'
-        : 'Where this agreement sits.';
-      heading.append(title, explanation);
-      section.append(heading);
-
-      seats.forEach((seat, index) => {
-        const row = document.createElement('div');
-        row.className = 'seat';
-        row.dataset.state = seat.live
-          ? (seat.is_home ? 'home' : 'live') : 'blocked';
-        const name = document.createElement('span');
-        name.className = 'seat-name';
-        name.textContent = seat.role_name
-          ? `${seat.role_name} in ${seat.title}`
-          : seat.title;
-        if (seat.joined) {
-          name.classList.add('agreement-link');
-          name.tabIndex = 0;
-          const open = () => selectAgreement(seat.agreement_uuid);
-          name.onclick = open;
-          name.onkeydown = event => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault();
-              open();
-            }
-          };
-        }
-        const state = document.createElement('span');
-        state.className = 'seat-state';
-        state.textContent = seat.is_home
-          ? 'home' : (seat.live ? 'also here' : 'not reachable');
-        row.append(name, state);
-        // Reordering is the agreement's own say in where it belongs, so it
-        // belongs to whoever speaks for it.
-        if (interactive && payloadState.holds_identity && seats.length > 1) {
-          const move = (delta, label, disabled) => {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = 'element-move';
-            button.textContent = label;
-            button.disabled = disabled;
-            button.onclick = async () => {
-              try {
-                await api('/api/agreement/parents/move',
-                  {holding_uuid: seat.holding_uuid, index: index + delta});
-                await load();
-              } catch (error) { showToast(error.message, true); }
-            };
-            return button;
-          };
-          row.append(
-            move(-1, '\u2191', index === 0),
-            move(1, '\u2193', index === seats.length - 1),
-          );
-        }
-        section.append(row);
-      });
-      return section;
+    // An agreement nobody is in is worth marking in the tree, where it sits
+    // among agreements people rely on. On its own page it needs no line: the
+    // Identity line already says nobody holds it and every role already says
+    // nobody is invited, so a third statement of the same fact is repetition.
+    // Working and instantiated are marked nowhere - they are the ordinary
+    // states of anything you have made.
+    const TEMPLATE_BADGE = {
+      label: 'Template',
+      title: 'Nobody holds a role here.',
     };
 
     // Accountabilities and domains differ only in what they are called, so
@@ -1322,8 +1252,6 @@
         );
         article.append(notice);
       }
-      const stateLine = renderState(payload.state);
-      if (stateLine) article.append(stateLine);
       // Identity normally reads as a badge on whoever holds it, so the
       // line only appears when it needs attention: contested, recorded
       // twice, vacant, or held by somebody else and therefore takeable.
@@ -1411,10 +1339,6 @@
         content.append(block);
       });
       article.append(content);
-      article.append(renderSeats(payload.parents, currentInteractionAllowed));
-      article.append(renderSeatOffers(
-        payload.seat_offers || [], currentInteractionAllowed,
-      ));
       article.append(renderParticipants(
         payload.participants, payload.identity, currentInteractionAllowed,
       ));

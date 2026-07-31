@@ -52,7 +52,13 @@ header {
   padding: 10px 24px;
 }
 article { background: var(--panel); color: var(--text); padding: 32px 48px; border-radius: 8px; }
-section { border-top: 1px solid var(--line); padding: 6px 0; }
+/* Two rules on the page and no more: one between what the agreement says and
+   who is in it, one between who is in it and what it expects of them. Those
+   are the seams that matter, and a rule on every section drew a line between
+   each pair of paragraphs instead. */
+section { padding: 6px 0; }
+#document > .acceptance-panel,
+#document > .roles { border-top: 1px solid var(--line); }
 button, select { padding: 8px 11px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--text); }
 .document-pane { min-width: 0; }
 
@@ -172,11 +178,7 @@ h2.element-label { margin: 0 0 4px; }
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.acceptance-panel {
-  margin: 10px 0 6px;
-  padding: 8px 4px;
-  border-bottom: 1px solid var(--line);
-}
+.acceptance-panel { margin: 10px 0 6px; padding: 8px 4px; }
 .acceptance-heading {
   display: flex;
   align-items: baseline;
@@ -303,8 +305,11 @@ h2.element-label { margin: 0 0 4px; }
   gap: 9px;
   padding: 4px 0;
 }
-/* Your own line comes first and is the only one that acts. */
-.participant.is-self {
+/* Two lines act: yours, and this agreement's own - it is an actor like any
+   other, so the roles it holds elsewhere are badges here rather than a
+   separate idea with a section of its own. Everybody else's line states. */
+.participant.is-self,
+.participant.is-agreement {
   padding: 7px 8px;
   margin: 0 0 6px 0;
   border-radius: 8px;
@@ -328,12 +333,25 @@ h2.element-label { margin: 0 0 4px; }
 }
 /* Your own badges are the control: click to take a role or step out of it.
    Everybody else's are a statement, so they are not clickable at all. */
-.participant.is-self .role-chip:not(:disabled) { cursor: pointer; }
-.participant.is-self .role-chip:not(:disabled):hover {
+.participant.is-self .role-chip:not(:disabled),
+.participant.is-agreement .role-chip:not(:disabled) { cursor: pointer; }
+.participant.is-self .role-chip:not(:disabled):hover,
+.participant.is-agreement .role-chip:not(:disabled):hover {
   border-color: var(--proposal);
   color: var(--text);
 }
 .role-chip:disabled { cursor: default; }
+/* One extra mark on a badge, for the thing that is not simply taking or
+   leaving the role: declining an invitation, or preferring where the
+   organisation draws this agreement. Hidden until the badge is under the
+   pointer, so the line reads as roles rather than as controls. */
+.chip-action {
+  margin-left: 5px;
+  opacity: 0;
+  cursor: pointer;
+}
+.role-chip:hover .chip-action { opacity: 0.75; }
+.chip-action:hover { opacity: 1; }
 .role-chip[data-identity="true"] {
   border-color: var(--text-muted);
   color: var(--text);
@@ -518,40 +536,6 @@ h2.element-label { margin: 0 0 4px; }
   .acceptance-heading p { margin-top: 4px; }
 }
 
-/* Which agreements this one holds a seat in. Home is derived from this
-   order, so the list is the control: there is no home to set, only a
-   preference between seats that work. */
-.seats { margin: 12px 0 4px; padding: 10px 4px 8px; }
-.seat {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-left: 22px;
-  padding: 3px 0;
-  font-size: 13px;
-}
-.seat-name { font-weight: 600; }
-.seat-state { color: var(--text-muted); font-size: 11px; }
-.seat[data-state="home"] .seat-state { color: var(--proposal); }
-.seat[data-state="blocked"] .seat-name,
-.seat[data-state="blocked"] .seat-state { opacity: 0.6; }
-.seat[data-state="blocked"] .seat-state { color: #f59e0b; }
-.seat .element-move { opacity: 1; }
-
-/* Seats offered to this agreement. Written on the parent's page, answered
-   here, because only this agreement's Identity holder may answer them. */
-.seat-offers { margin: 4px 0; padding: 0 4px 8px; }
-.seat-offer {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-left: 22px;
-  padding: 3px 0;
-  font-size: 13px;
-}
-.seat-offer[data-state="refused"] .seat-name { opacity: 0.6; }
-.seat-accept, .seat-decline { font-size: 12px; padding: 2px 8px; cursor: pointer; }
-.seat-accept { border-color: var(--proposal); color: var(--proposal); }
 /* A seat home leaves out still has to be visible in the tree. */
 .other-parents {
   grid-column: 1 / -1;
@@ -582,17 +566,9 @@ h2.element-label { margin: 0 0 4px; }
 .element-toggle:hover { color: var(--text); }
 .content.is-collapsed { display: none; }
 
-/* Template or working is how many actors are in it, so this reports rather
-   than offers: the badge is not a control and there is nothing to switch.
-   A working agreement is unbadged, being the ordinary case. */
-.agreement-state {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 8px 4px 4px 22px;
-  font-size: 12px;
-}
+/* An agreement nobody is in is worth marking in the tree, where it sits
+   among agreements people rely on. Nowhere else: on its own page the
+   Identity line and every role already say the same thing. */
 .state-badge {
   padding: 1px 8px;
   border-radius: 999px;
@@ -603,15 +579,6 @@ h2.element-label { margin: 0 0 4px; }
   letter-spacing: 0.04em;
   white-space: nowrap;
 }
-.state-badge[data-state="template"] { border-style: dashed; }
-.state-badge[data-state="instantiated"] {
-  border-style: solid;
-  color: #f59e0b;
-  border-color: #f59e0b;
-}
-.state-note { color: var(--text-muted); }
-/* Copying lives in the flow that makes a new agreement, not here: an action
-   about some other agreement has no business on this one's page. */
 /* In the tree the row is a name and a count, so an extra fact takes its own
    line underneath - the same shape as the other markers there. */
 .organization-row .state-badge {

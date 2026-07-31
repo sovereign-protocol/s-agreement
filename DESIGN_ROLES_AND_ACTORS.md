@@ -434,7 +434,7 @@ most one per agreement over a DAG, so the projection is a forest and
 `renderOrganization` needed no restructuring at all (2.5). The DAG never
 reaches the tree renderer. What it did need is the two markers that keep the
 projection honest - `also in:` on a row whose other seats home leaves out,
-and a *Seats held* list on the agreement's own page where the order is set.
+and the agreement's own badges on its page, whose order sets home (§4.5).
 
 
 The graph step. Highest risk — schedule it alone.
@@ -504,6 +504,17 @@ actor: an agreement could be offered a seat, but nothing showed it the offer.
   offers naming this agreement so the answer is made where the authority to
   make it lives. Invitations reaching this session only as proposals are
   included, since answering one adopts it, exactly as for a person (§2.1).
+- **There is no "seat" in the interface.** A first cut gave holdings and
+  invitations two sections of their own, titled *Seats held* and *Invited
+  to* — which invented a second vocabulary for something the model already
+  has a word for. An Agreement is an Actor (§1.1), so the roles it holds
+  elsewhere are roles, drawn as badges on the agreement's own line in
+  *Actors*, read and acted on exactly as a person's are: click to take,
+  click to step out. A badge names the role and where it is —
+  "Operations in Cooperative" — because that is the whole of what
+  distinguishes it from a role held here. *Seat* survives only in the
+  storage type and the function names, where it names an edge in the graph
+  rather than a thing the reader has to learn.
 - **`decline_seat` completes the pair.** Without it an unwanted invitation
   sits forever: the offer belongs to the parent and only its author may
   withdraw it (§2.3), so the child needs a refusal of its own. A declined seat
@@ -557,8 +568,8 @@ full re-render per payload.
 
 **[DONE]** The region is titled *Role Definitions & Invitations*, and it is
 the definition rather than the doing. It sits last: the agreement's text
-comes first, then who is in it — seats held, seats offered, participants —
-then what it expects of them.
+comes first, then who is in it — you, this agreement, everybody else — then
+what it expects of them.
 
 The text collapses behind **a caret on the title itself**, and nothing more.
 An earlier version put a labelled *Agreement text* toggle above the sections;
@@ -637,20 +648,38 @@ not the mechanism:
 > Andre currently holds Identity. Taking it will create a divergence, and
 > **your role offers will not be adopted by others** until it is resolved.
 
-### 4.5 Participants — your line acts, everybody else's states
+### 4.5 Actors — two lines act, everybody else's states
 
-**[DONE]** Replaces the agreement-level acceptance panel. People rows with
+**[DONE]** Replaces the agreement-level acceptance panel. Actor rows with
 their roles as badges, each carrying its own status — somebody may hold
 three roles in three different states.
 
-**Your own line comes first and is the only one that acts.** A badge is a
-control: click to take the role, click again to step out, and it changes on
-the spot. **Refuse is not an action here** — the choice is holding or not
-holding.
+**Two lines act.** *Yours* comes first: a badge is a control, click to take
+the role, click again to step out, and it changes on the spot. **Refuse is
+not an action here** — the choice is holding or not holding.
+
+*This agreement's* comes second, because an Agreement is an Actor and the
+roles it holds in other agreements are roles. Same badges, same two clicks,
+answered by whoever holds this agreement's Identity. Two marks appear on
+hover for the things that are not simply taking or leaving: `×` declines an
+invitation, and `↑` says draw the organisation under this one — home is the
+first holding in order that works (§2.5), so badge order *is* the control
+and there is no home to set.
 
 Everybody else's badges are inert. Where somebody else stands is a
 statement of fact, not a control over them, and drawing it as a button
 would say otherwise.
+
+**Nothing states how many actors there are.** A line reading "One actor —
+nothing is agreed between anybody yet" was tried and removed: the Identity
+line and every role already say who is and is not in it, so it was a third
+statement of the same fact. Template is marked in the tree only (§4.6),
+where it distinguishes one row among many.
+
+**Two rules on the page**, and no more: one between what the agreement says
+and who is in it, one between who is in it and what it expects of them.
+A blanket rule on every `<section>` drew a line between each pair of
+paragraphs instead.
 
 Identity renders as an ordinary badge marked with a key (§1.3), so what it
 is — one of the roles a person holds — is visible rather than explained.

@@ -260,12 +260,16 @@ class AssetTests(unittest.TestCase):
         self.assertIn("avatarFor(holder)", self.agreement)
         self.assertIn("badge.title", self.agreement)
 
-    def test_a_seat_offered_to_this_agreement_is_answered_here(self):
-        # The offer is written on the parent's page, but only this
-        # agreement's Identity holder may answer it, and they need not be
-        # looking at the parent.
-        self.assertIn("payload.seat_offers", self.agreement)
+    def test_an_agreement_holds_roles_the_way_a_person_does(self):
+        # An Agreement is a normal actor, so the roles it holds elsewhere are
+        # badges on its own line in Actors - taken and left by clicking, as
+        # yours are. There is no separate idea of a seat with a section of
+        # its own.
+        self.assertIn("payloadState.seat_offers", self.agreement)
         self.assertIn("/api/agreement/roles/decline_seat", self.agreement)
+        self.assertIn("is-agreement", self.agreement)
+        for gone in ("renderSeats", "renderSeatOffers", "seat-offer", "Seats held"):
+            self.assertNotIn(gone, self.agreement)
 
     def test_the_agreement_text_collapses_from_the_title(self):
         # A caret after the name and nothing else: what it folds is directly
@@ -278,6 +282,24 @@ class AssetTests(unittest.TestCase):
         # agreement is made, which is the cockpit's create flow.
         self.assertNotIn("state-duplicate", self.agreement)
         self.assertNotIn("agreements/clone", self.agreement)
+
+    def test_the_page_carries_two_rules_and_the_state_line_is_gone(self):
+        # One rule between what the agreement says and who is in it, one
+        # between who is in it and what it expects of them. A rule on every
+        # section drew a line between each pair of paragraphs instead.
+        css = files("s_agreement.assets").joinpath(
+            "agreement.css",
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "#document > .acceptance-panel,\n#document > .roles"
+            " { border-top: 1px solid var(--line); }",
+            css,
+        )
+        self.assertNotIn("section { border-top", css)
+        # How many actors are in it is not worth a line of its own: the
+        # Identity line and every role already say it.
+        self.assertNotIn("agreement-state", self.agreement)
+        self.assertNotIn("One actor", self.agreement)
 
     def test_assets_never_navigate_to_the_bare_root_with_a_query(self):
         # "/" serves whichever application is primary, so a root-relative link

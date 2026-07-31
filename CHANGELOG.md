@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0a2 - 2026-07-30
+
+- Store one acceptance/refusal decision node per participant, with its UTC
+  decision time, optional expiration, and SHA-256 agreement reference.
+- Show avatar-and-name decision badges for accepted, refused, pending,
+  expired, and outdated states.
+- Require a current, unexpired acceptance of every ancestor before mounting a
+  subagreement invitation.
+- Preserve focused inputs during periodic refreshes, fixing interrupted
+  subagreement-name entry.
+
+## 0.2.0a1 - 2026-07-30
+
+- Added consent-based organizational trees. A parent agreement holds an
+  explicit link while every subagreement remains a separately invited topic.
+- Added an organization panel showing the local hierarchy and topic-scoped
+  participant counts, including restricted child placeholders.
+- Added subagreement creation and organization queries to the backward-
+  compatible facade API v1, and advanced the data schema to version 2.
+- Deleting a parent promotes its child agreements; deleting a child removes
+  its parent link without deleting unrelated agreements.
+
 ## 0.1.0a2 - 2026-07-30
 
 - Require Sovereign Core 0.1.5 for composite application responses.

@@ -13,8 +13,18 @@
     <div id="shell"></div>
   </header>
   <main>
-    <p id="empty">Create or accept an agreement to begin.</p>
-    <article id="document"></article>
+    <aside id="organization" aria-label="Organization">
+      <h2>Organization</h2>
+      <div id="organizationTree"></div>
+      <p class="consent-note">
+        Joining a parent does not join its subagreements; it makes them
+        available. Every parent must be accepted first.
+      </p>
+    </aside>
+    <div class="document-pane">
+      <p id="empty">Create or accept an agreement to begin.</p>
+      <article id="document"></article>
+    </div>
   </main>
   <!-- shared.js binds the confirm dialog's buttons as it loads, so the
        dialog markup has to exist before that script runs. -->
@@ -33,6 +43,7 @@
   <script>
     const api = SovereignApi.request;
     let current = null;
+    let currentInteractionAllowed = false;
     let payloadState = {};
     const nodeStatus = (payload, uuid) => payload.transition_by_node[uuid]?.type;
 
@@ -123,7 +134,7 @@
     // is something to react to and stays hidden otherwise.
     const elementRow = ({node, tag, field, rename, addLabel, onAdd, onDelete,
                          deleteTitle, deleteMessage, index, count, onMove,
-                         proposed = false}) => {
+                         proposed = false, interactive = true}) => {
       const row = document.createElement('div');
       row.className = 'element-row';
       row.classList.toggle('is-proposed', proposed);
@@ -141,7 +152,9 @@
       const label = document.createElement(tag);
       label.className = 'element-label';
       label.textContent = node.data[field];
-      if (rename && !proposed) editable(label, node.data[field], rename);
+      if (rename && !proposed && interactive) {
+        editable(label, node.data[field], rename);
+      }
 
       const actions = document.createElement('span');
       actions.className = 'element-actions';
@@ -154,7 +167,7 @@
 
       // Reorder among siblings. Up/down rather than drag: unambiguous, works
       // by keyboard, and does not fight the click-to-edit on the text itself.
-      if (onMove) {
+      if (interactive && onMove) {
         const up = document.createElement('button');
         up.type = 'button';
         up.className = 'element-move';
@@ -172,7 +185,7 @@
         actions.append(up, down);
       }
 
-      if (onAdd) {
+      if (interactive && onAdd) {
         const add = document.createElement('button');
         add.type = 'button';
         add.className = 'element-add';
@@ -182,7 +195,8 @@
         actions.append(add);
       }
 
-      if (transition
+      if (interactive
+          && transition
           && !['in_agreement', 'in_transition'].includes(transition.type)
           && transition.peer_addr) {
         const react = document.createElement('button');
@@ -221,13 +235,16 @@
         actions.append(react);
       }
 
-      if (onDelete) {
+      if (interactive && onDelete) {
         const remove = document.createElement('button');
         remove.type = 'button';
         remove.className = 'element-delete';
         remove.textContent = 'Delete';
         remove.title = 'Delete';
-        remove.onclick = () => confirmAction(deleteTitle, deleteMessage, onDelete);
+        remove.onclick = () => {
+          document.querySelector('#confirmModalConfirmBtn').textContent = 'Delete';
+          confirmAction(deleteTitle, deleteMessage, onDelete);
+        };
         actions.append(remove);
       }
 
@@ -269,6 +286,201 @@
         .map(pair => pair[0]);
     };
 
+    const selectAgreement = async (agreementUuid) => {
+      await api('/api/agreement/agreements/select',
+        {agreement_uuid: agreementUuid});
+      await load();
+    };
+
+    const renderOrganization = (organization) => {
+      const tree = document.querySelector('#organizationTree');
+      tree.replaceChildren();
+      const renderNode = (item, depth = 0) => {
+        const branch = document.createElement('div');
+        branch.className = 'organization-branch';
+        branch.style.setProperty('--depth', depth);
+        const row = document.createElement('div');
+        row.className = 'organization-row';
+        row.classList.toggle('is-current', item.uuid === current?.uuid);
+        row.classList.toggle('is-restricted', !item.joined);
+        row.classList.toggle(
+          'is-readonly', item.joined && !item.interaction_allowed,
+        );
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'organization-name';
+        button.textContent = item.title;
+        button.disabled = !item.joined;
+        button.title = item.joined
+          ? (
+            item.interaction_allowed
+              ? `Open ${item.title}`
+              : `Open ${item.title} read-only`
+          )
+          : 'This subagreement has separate membership';
+        if (item.joined) button.onclick = () => selectAgreement(item.uuid);
+
+        const count = document.createElement('span');
+        count.className = 'member-count';
+        count.textContent = item.joined
+          ? `${(item.members || []).length} ${(item.members || []).length === 1 ? 'person' : 'people'}`
+          : 'Not joined';
+        row.append(button, count);
+        if (item.relationship_status === 'awaiting_parent_agreement') {
+          const pending = document.createElement('span');
+          pending.className = 'relationship-pending';
+          pending.textContent = 'Parent link pending';
+          row.append(pending);
+        }
+        branch.append(row);
+        for (const child of item.children || []) {
+          branch.append(renderNode(child, depth + 1));
+        }
+        return branch;
+      };
+      for (const root of organization?.roots || []) {
+        tree.append(renderNode(root));
+      }
+      if (!tree.children.length) {
+        const empty = document.createElement('p');
+        empty.className = 'organization-empty';
+        empty.textContent = 'No agreements yet';
+        tree.append(empty);
+      }
+    };
+
+    const renderAcceptances = (
+      acceptances, interactive, refusalConsequences,
+    ) => {
+      const section = document.createElement('section');
+      section.className = 'acceptance-panel';
+      const heading = document.createElement('div');
+      heading.className = 'acceptance-heading';
+      const title = document.createElement('h3');
+      title.textContent = 'Acceptance';
+      const reference = document.createElement('p');
+      reference.textContent = 'Each decision is bound to this version of the agreement.';
+      heading.append(title, reference);
+      section.append(heading);
+
+      const badges = document.createElement('div');
+      badges.className = 'acceptance-badges';
+      const statusLabels = {
+        accepted: 'Accepted',
+        refused: 'Refused',
+        pending: 'No decision',
+        expired: 'Expired',
+        outdated: 'Needs renewal',
+      };
+      for (const item of acceptances || []) {
+        const badge = document.createElement('div');
+        badge.className = 'acceptance-badge';
+        badge.dataset.status = item.status;
+        if (item.picture) {
+          const avatar = document.createElement('img');
+          avatar.className = 'acceptance-avatar';
+          avatar.src = item.picture;
+          avatar.alt = '';
+          badge.append(avatar);
+        } else {
+          const avatar = document.createElement('span');
+          avatar.className = 'acceptance-avatar acceptance-initials';
+          avatar.textContent = (item.name || '?').trim().slice(0, 1).toUpperCase();
+          badge.append(avatar);
+        }
+        const body = document.createElement('span');
+        body.className = 'acceptance-body';
+        const name = document.createElement('strong');
+        name.textContent = item.is_self ? `${item.name} (you)` : item.name;
+        const status = document.createElement('span');
+        status.className = 'acceptance-status';
+        status.textContent = statusLabels[item.status] || item.status;
+        body.append(name, status);
+        if (item.decided_at) {
+          const details = document.createElement('span');
+          details.className = 'acceptance-details';
+          const decided = new Date(item.decided_at).toLocaleString();
+          const expiry = item.expires_at
+            ? `expires ${new Date(item.expires_at).toLocaleString()}`
+            : 'no expiration';
+          const hash = item.reference_hash || '';
+          details.textContent = `${decided} · ${expiry} · ${hash.slice(0, 19)}…`;
+          details.title = hash;
+          badge.title = (
+            `${statusLabels[item.status] || item.status} · ${decided} · `
+            + `${expiry} · ${hash}`
+          );
+          body.append(details);
+        }
+        badge.append(body);
+        badges.append(badge);
+      }
+      section.append(badges);
+
+      const controls = document.createElement('div');
+      controls.className = 'acceptance-controls';
+      const expiryLabel = document.createElement('label');
+      expiryLabel.textContent = 'Expiration';
+      const expiryInput = document.createElement('input');
+      expiryInput.type = 'datetime-local';
+      expiryInput.setAttribute('aria-label', 'Acceptance expiration');
+      expiryLabel.append(expiryInput);
+      const decide = async decision => {
+        const expiresAt = expiryInput.value
+          ? new Date(expiryInput.value).toISOString()
+          : null;
+        try {
+          await api('/api/agreement/agreements/decision', {
+            agreement_uuid: current.uuid,
+            decision,
+            expires_at: expiresAt,
+          });
+          await load();
+          showToast(decision === 'accepted'
+            ? 'Agreement accepted' : 'Agreement refused');
+        } catch (error) { showToast(error.message, true); }
+      };
+      const accept = document.createElement('button');
+      accept.type = 'button';
+      accept.className = 'decision-accept';
+      accept.textContent = 'Accept current version';
+      accept.onclick = () => decide('accepted');
+      const refuse = document.createElement('button');
+      refuse.type = 'button';
+      refuse.className = 'decision-refuse';
+      refuse.textContent = 'Refuse';
+      const consequenceNames = (refusalConsequences || [])
+        .map(item => item.title);
+      const consequenceDescription = consequenceNames.length
+        ? (
+          `This will also mark ${consequenceNames.length} joined `
+          + `subagreement${consequenceNames.length === 1 ? '' : 's'} as refused: `
+          + `${consequenceNames.join(', ')}. They remain visible, but cannot be `
+          + 'changed until every parent is accepted again. Each descendant '
+          + 'must then be accepted again separately.'
+        )
+        : (
+          'Any subagreements remain visible, but cannot be changed until '
+          + 'this agreement is accepted again.'
+        );
+      refuse.onclick = () => {
+        document.querySelector('#confirmModalConfirmBtn').textContent = 'Refuse';
+        confirmAction(
+          'Refuse this agreement?',
+          consequenceDescription,
+          () => decide('refused'),
+        );
+      };
+      controls.append(expiryLabel, accept, refuse);
+      const content = document.createElement('div');
+      content.className = 'acceptance-content';
+      content.append(badges);
+      if (interactive) content.append(controls);
+      section.append(content);
+      return section;
+    };
+
     const findDisplayedNode = (uuid) => {
       const roots = [
         current,
@@ -289,6 +501,8 @@
     const render = (payload) => {
       payloadState = payload;
       current = payload.agreement;
+      currentInteractionAllowed = Boolean(payload.interaction?.allowed);
+      renderOrganization(payload.organization);
       SovereignShell.setTopicSelector({
         label: 'Agreement',
         topics: payload.agreements.map(item => ({
@@ -296,12 +510,8 @@
           title: item.data.title || 'Untitled agreement',
         })),
         selectedUuid: current?.uuid || '',
-        onSelect: async agreementUuid => {
-          await api('/api/agreement/agreements/select',
-            {agreement_uuid: agreementUuid});
-          await load();
-        },
-        onRename: current ? async title => {
+        onSelect: selectAgreement,
+        onRename: current && currentInteractionAllowed ? async title => {
           await api('/api/agreement/agreements/rename',
             {agreement_uuid: current.uuid, title});
           await load();
@@ -313,11 +523,15 @@
       // Never rebuild the document while it is being edited, or the caret
       // is destroyed mid-word by the poll.
       if (article.contains(document.activeElement)
-        && document.activeElement.isContentEditable) {
+        && (
+          document.activeElement.isContentEditable
+          || document.activeElement.matches('input, textarea, select')
+        )) {
         SovereignShell.refresh();
         return;
       }
       article.replaceChildren();
+      article.classList.toggle('is-readonly', !currentInteractionAllowed);
       if (!current) { SovereignShell.refresh(); return; }
 
       article.append(elementRow({
@@ -334,7 +548,89 @@
             await load();
           } catch (error) { showToast(error.message, true); }
         },
+        interactive: currentInteractionAllowed,
       }));
+      if (!currentInteractionAllowed) {
+        const notice = document.createElement('p');
+        notice.className = 'readonly-notice';
+        notice.textContent = (
+          payload.interaction?.reason
+          || 'This subagreement is visible but read-only.'
+        );
+        article.append(notice);
+      }
+      article.append(renderAcceptances(
+        payload.acceptances,
+        currentInteractionAllowed,
+        payload.refusal_consequences,
+      ));
+
+      const subagreements = displayedChildren(current, 'agreement_link');
+      const organizationSection = document.createElement('section');
+      organizationSection.className = 'subagreements';
+      const organizationHeading = document.createElement('div');
+      organizationHeading.className = 'subagreement-heading';
+      const heading = document.createElement('h3');
+      heading.textContent = 'Subagreements';
+      const explanation = document.createElement('p');
+      explanation.textContent = (
+        'Create a separate agreement, then invite only the people who should join it.'
+      );
+      organizationHeading.append(heading, explanation);
+      organizationSection.append(organizationHeading);
+      for (const {node: link, proposed} of subagreements) {
+        const row = elementRow({
+          node: link,
+          tag: 'p',
+          field: 'title',
+          proposed,
+          interactive: currentInteractionAllowed,
+        });
+        const linked = payload.agreements.some(
+          agreement => agreement.uuid === link.data.child_agreement_uuid,
+        );
+        const label = row.querySelector('.element-label');
+        if (linked && !proposed) {
+          label.classList.add('agreement-link');
+          label.tabIndex = 0;
+          label.title = 'Open subagreement';
+          label.onclick = () => selectAgreement(
+            link.data.child_agreement_uuid,
+          );
+          label.onkeydown = event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              selectAgreement(link.data.child_agreement_uuid);
+            }
+          };
+        } else if (!proposed) {
+          const restricted = document.createElement('span');
+          restricted.className = 'restricted-badge';
+          restricted.textContent = 'Separate membership';
+          row.querySelector('.element-actions').append(restricted);
+        }
+        organizationSection.append(row);
+      }
+      const ownAcceptance = (payload.acceptances || []).find(item => item.is_self);
+      if (
+        currentInteractionAllowed
+        && ownAcceptance?.status === 'accepted'
+      ) {
+        organizationSection.append(composer('New subagreement name', async title => {
+          await api('/api/agreement/agreements/create_subagreement', {
+            parent_agreement_uuid: current.uuid,
+            title,
+          });
+        }));
+      } else if (currentInteractionAllowed) {
+        const prerequisite = document.createElement('p');
+        prerequisite.className = 'subagreement-prerequisite';
+        prerequisite.textContent = (
+          'Accept the current agreement version before creating a subagreement.'
+        );
+        organizationSection.append(prerequisite);
+      }
+      article.append(organizationSection);
 
       const sections = displayedChildren(current, 'agreement_section');
       const sectionsHaveProposals = sections.some(entry => entry.proposed);
@@ -345,6 +641,7 @@
           tag: 'h3',
           field: 'title',
           proposed,
+          interactive: currentInteractionAllowed,
           rename: proposed ? null : value => api(
             '/api/agreement/sections/rename',
             {section_uuid: section.uuid, title: value},
@@ -386,6 +683,7 @@
             tag: 'p',
             field: 'text',
             proposed: clauseProposed,
+            interactive: currentInteractionAllowed,
             rename: clauseProposed ? null : value => api(
               '/api/agreement/clauses/update',
               {clause_uuid: clause.uuid, text: value},
@@ -419,7 +717,9 @@
     SovereignShell.mount({
       container: document.querySelector('#shell'),
       applicationId: 'agreement',
-      topicUuid: () => current?.uuid || '',
+      topicUuid: () => (
+        currentInteractionAllowed ? (current?.uuid || '') : ''
+      ),
       state: () => payloadState,
       onChanged: () => load(),
       agendaRoutes: {

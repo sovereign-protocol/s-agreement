@@ -36,7 +36,15 @@
   --delete: #9a3412;
 }
 body { margin: 0; font: 15px system-ui, sans-serif; background: var(--page); color: var(--text); }
-main { max-width: 850px; margin: auto; padding: 18px 24px; }
+main {
+  max-width: 1180px;
+  margin: auto;
+  padding: 18px 24px;
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 850px);
+  gap: 20px;
+  align-items: start;
+}
 /* Every application separates header from content with a rule; Agreement had
    none, which is why its header read as floating. */
 header {
@@ -46,6 +54,71 @@ header {
 article { background: var(--panel); color: var(--text); padding: 32px 48px; border-radius: 8px; }
 section { border-top: 1px solid var(--line); padding: 6px 0; }
 button, select { padding: 8px 11px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--text); }
+.document-pane { min-width: 0; }
+
+#organization {
+  position: sticky;
+  top: 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px 14px;
+}
+#organization h2 {
+  margin: 0 6px 14px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.organization-branch { display: grid; gap: 3px; }
+.organization-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  align-items: center;
+  margin-left: calc(var(--depth) * 14px);
+  padding: 5px 6px;
+  border-left: 1px solid var(--line);
+  border-radius: 0 5px 5px 0;
+}
+.organization-row.is-current { background: var(--hover); }
+.organization-row.is-readonly .organization-name::after {
+  content: " · read-only";
+  color: #f59e0b;
+  font-size: 10px;
+}
+.organization-name {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.organization-name:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+.member-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.relationship-pending {
+  grid-column: 1 / -1;
+  color: #f59e0b;
+  font-size: 11px;
+}
+.consent-note,
+.organization-empty {
+  margin: 14px 6px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
 
 /* One row shape at every level: status on the left with the name, actions on
    the right. Same grid for the agreement, its sections, and its clauses, so
@@ -99,6 +172,163 @@ h2.element-label { margin: 0 0 4px; }
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+.restricted-badge {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.acceptance-panel {
+  margin: 10px 0 6px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.acceptance-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 4px 6px 22px;
+}
+.acceptance-heading h3 { margin: 0; font-size: 12px; }
+.acceptance-heading p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.acceptance-content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 4px 0 22px;
+}
+.acceptance-badges {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 0;
+}
+.acceptance-badge {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  max-width: 210px;
+  padding: 2px 6px 2px 2px;
+  border: 1px solid var(--line);
+  border-bottom: 2px solid var(--text-muted);
+  border-radius: 999px;
+  background: var(--hover);
+}
+.acceptance-badge[data-status="accepted"] { border-bottom-color: #22c55e; }
+.acceptance-badge[data-status="refused"] { border-bottom-color: #ef4444; }
+.acceptance-badge[data-status="expired"],
+.acceptance-badge[data-status="outdated"] { border-bottom-color: #f59e0b; }
+.acceptance-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--page);
+}
+.acceptance-initials {
+  display: grid;
+  place-items: center;
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 700;
+}
+.acceptance-body {
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.acceptance-body strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.acceptance-status {
+  color: var(--text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.acceptance-details {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+.acceptance-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  margin-left: auto;
+}
+.acceptance-controls label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.acceptance-controls input {
+  min-height: 26px;
+  width: 155px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font-size: 10px;
+}
+.acceptance-controls button { padding: 5px 7px; font-size: 11px; }
+.decision-accept {
+  background: var(--teal, #0f7a64);
+  border-color: var(--teal, #0f7a64);
+  color: #fff;
+}
+.decision-refuse { color: var(--delete); }
+.subagreements {
+  margin: 18px 0 10px;
+  padding: 14px 4px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.subagreement-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 4px 6px 22px;
+}
+.subagreement-heading h3 { margin: 0; font-size: 14px; }
+.subagreement-heading p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.agreement-link {
+  color: var(--proposal);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+}
+.agreement-link:hover { text-decoration-color: currentColor; }
+.readonly-notice {
+  margin: 10px 4px 6px 22px;
+  padding: 7px 9px;
+  border-left: 3px solid #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.subagreement-prerequisite {
+  margin: 10px 4px 4px 22px;
+  color: #f59e0b;
+  font-size: 12px;
+}
 .element-actions button {
   font-size: 12px;
   padding: 4px 8px;
@@ -149,3 +379,15 @@ h2.element-label { margin: 0 0 4px; }
 .editable { border-radius: 4px; padding: 2px 4px; margin-left: -4px; cursor: text; }
 .editable:hover { background: var(--hover); }
 .editable:focus { outline: 2px solid var(--proposal); outline-offset: 1px; background: var(--hover); }
+
+@media (max-width: 780px) {
+  main { grid-template-columns: 1fr; padding: 12px; }
+  #organization { position: static; }
+  article { padding: 24px 20px; }
+  .subagreement-heading,
+  .acceptance-heading { display: block; }
+  .subagreement-heading p,
+  .acceptance-heading p { margin-top: 4px; }
+  .acceptance-content { align-items: stretch; flex-direction: column; }
+  .acceptance-controls { width: 100%; flex-wrap: wrap; }
+}

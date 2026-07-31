@@ -13,7 +13,7 @@ from .logic import AgreementLogic
 APPLICATION_MANIFEST = ApplicationManifest(
     application_id="agreement",
     display_name="S-Agreement",
-    data_schema_version=1,
+    data_schema_version=3,
     asset_package="s_agreement.assets",
     icon=(
         '<path d="M6 3h8l4 4v14H6z"></path>'

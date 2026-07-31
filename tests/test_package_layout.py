@@ -198,6 +198,34 @@ class AssetTests(unittest.TestCase):
             self.agreement,
         )
 
+    def test_polling_preserves_focused_form_fields(self):
+        self.assertIn(
+            "document.activeElement.matches('input, textarea, select')",
+            self.agreement,
+        )
+
+    def test_acceptance_badges_use_identity_and_version_details(self):
+        for marker in (
+            "acceptance-avatar",
+            "item.picture",
+            "item.name",
+            "item.reference_hash",
+            "item.expires_at",
+            "Accepted",
+            "Refused",
+        ):
+            self.assertIn(marker, self.agreement)
+
+    def test_refusal_confirmation_describes_descendant_consequences(self):
+        for marker in (
+            "Refuse this agreement?",
+            "subagreement",
+            "remain visible",
+            "must then be accepted again separately",
+            "confirmModalConfirmBtn",
+        ):
+            self.assertIn(marker, self.agreement)
+
     def test_assets_never_navigate_to_the_bare_root_with_a_query(self):
         # "/" serves whichever application is primary, so a root-relative link
         # lands somewhere that depends on host configuration.
@@ -236,6 +264,11 @@ class ThemeTests(unittest.TestCase):
         # underneath it were ever made dark again without also moving this.
         self.assertNotIn("color: #111827", self.css)
         self.assertNotIn("color:#111827", self.css)
+
+    def test_acceptance_strip_is_compact_with_controls_at_the_right(self):
+        self.assertIn(".acceptance-content", self.css)
+        self.assertIn("margin-left: auto", self.css)
+        self.assertIn("width: 22px", self.css)
 
 
 if __name__ == "__main__":

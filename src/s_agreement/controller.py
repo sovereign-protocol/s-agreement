@@ -23,6 +23,12 @@ def build_routes(logic, runtime) -> list[Route]:
         data = await request.json()
         return await _json_result(runtime, logic.create_agreement(data.get("title", "")))
 
+    async def api_create_subagreement(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.create_subagreement(
+            data["parent_agreement_uuid"], data.get("title", ""),
+        ))
+
     async def api_select_agreement(request: Request):
         data = await request.json()
         return await _json_result(runtime, logic.select_agreement(data["agreement_uuid"]))
@@ -32,6 +38,14 @@ def build_routes(logic, runtime) -> list[Route]:
         return await _json_result(
             runtime, logic.delete_agreement(data["agreement_uuid"]),
         )
+
+    async def api_set_decision(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.set_decision(
+            data["agreement_uuid"],
+            data.get("decision", ""),
+            data.get("expires_at"),
+        ))
 
     async def api_create_section(request: Request):
         data = await request.json()
@@ -128,9 +142,19 @@ def build_routes(logic, runtime) -> list[Route]:
     return [
         Route("/api/agreement/document", api_document),
         Route("/api/agreement/agreements/create", api_create_agreement, methods=["POST"]),
+        Route(
+            "/api/agreement/agreements/create_subagreement",
+            api_create_subagreement,
+            methods=["POST"],
+        ),
         Route("/api/agreement/agreements/select", api_select_agreement, methods=["POST"]),
         Route("/api/agreement/agreements/rename", api_rename_agreement, methods=["POST"]),
         Route("/api/agreement/agreements/delete", api_delete_agreement, methods=["POST"]),
+        Route(
+            "/api/agreement/agreements/decision",
+            api_set_decision,
+            methods=["POST"],
+        ),
         Route("/api/agreement/sections/create", api_create_section, methods=["POST"]),
         Route("/api/agreement/sections/rename", api_rename_section, methods=["POST"]),
         Route("/api/agreement/sections/delete", api_delete_section, methods=["POST"]),

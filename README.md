@@ -23,6 +23,27 @@ python -m venv .venv
 Open <http://127.0.0.1:9307>. Direct HTTP is intended for LAN/VPN use. Local
 folder and SFTP mailbox channels are configured through relay targets.
 
+## Organizations
+
+Agreements can contain subagreements, forming an organizational tree. Each
+subagreement is still an independent shared topic:
+
+- the parent participants explicitly accept the organizational link;
+- the subagreement participants separately accept their invitation; and
+- joining a parent never grants access to a child;
+- every ancestor must have a current, unexpired acceptance before a child
+  invitation can be mounted.
+
+This permits a broad organization agreement with smaller circles, teams, or
+roles beneath it, each shared only with its own participants. The organization
+panel shows the agreements available locally and marks child agreements that
+have separate membership.
+
+Each participant's acceptance or refusal is stored as its own agreement node.
+It records the decision time, optional expiration (infinite by default), and a
+SHA-256 reference to the exact agreement content. A content change makes older
+acceptances visibly outdated until that participant renews them.
+
 ## Desktop window
 
 The same host can draw into its own window instead of a browser tab:

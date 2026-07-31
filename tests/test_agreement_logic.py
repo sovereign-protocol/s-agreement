@@ -106,6 +106,320 @@ class AgreementLogicTests(unittest.TestCase):
             clause_uuid,
         )
 
+    def test_acceptance_is_a_separate_hashed_timestamped_item(self):
+        runtime = self.runtime(9458)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        agreement = runtime.session.protocol.index[agreement_uuid]
+        decisions = [
+            child for child in agreement.live_children()
+            if child.data.get("type") == "agreement_decision"
+        ]
+
+        self.assertEqual(len(decisions), 1)
+        decision = decisions[0].data
+        self.assertEqual(
+            decision["identity_uuid"], runtime.session.identity.uuid,
+        )
+        self.assertEqual(decision["decision"], "accepted")
+        self.assertTrue(decision["decided_at"].endswith("Z"))
+        self.assertTrue(decision["reference_hash"].startswith("sha256:"))
+        self.assertIsNone(decision["expires_at"])
+        # Decision records have their own storage nodes, but are not document
+        # clauses and therefore stay out of the document serialization.
+        self.assertNotIn(
+            "agreement_decision",
+            {
+                child["data"].get("type")
+                for child in runtime.logic.document_payload(
+                    agreement_uuid,
+                )["agreement"]["children"]
+            },
+        )
+
+    def test_refusal_updates_the_users_item_and_renders_a_badge(self):
+        runtime = self.runtime(9459)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        agreement = runtime.session.protocol.index[agreement_uuid]
+        original = next(
+            child for child in agreement.live_children()
+            if child.data.get("type") == "agreement_decision"
+        )
+
+        result = runtime.logic.set_decision(
+            agreement_uuid, "refused", "2035-01-01T00:00:00Z",
+        )
+
+        self.assertEqual(result.status, "ok")
+        agreement = runtime.session.protocol.index[agreement_uuid]
+        decisions = [
+            child for child in agreement.live_children()
+            if child.data.get("type") == "agreement_decision"
+        ]
+        self.assertEqual([item.uuid for item in decisions], [original.uuid])
+        badge = runtime.logic.acceptance_badges(agreement_uuid)[0]
+        self.assertEqual(badge["status"], "refused")
+        self.assertEqual(badge["expires_at"], "2035-01-01T00:00:00Z")
+
+    def test_content_change_makes_acceptance_outdated_until_renewed(self):
+        runtime = self.runtime(9464)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        section_uuid = runtime.logic.create_section(
+            agreement_uuid, "Purpose",
+        ).value
+
+        badge = runtime.logic.acceptance_badges(agreement_uuid)[0]
+        self.assertEqual(badge["status"], "outdated")
+
+        renewed = runtime.logic.set_decision(agreement_uuid, "accepted")
+        self.assertEqual(renewed.status, "ok")
+        badge = runtime.logic.acceptance_badges(agreement_uuid)[0]
+        self.assertEqual(badge["status"], "accepted")
+        self.assertEqual(
+            badge["reference_hash"],
+            runtime.logic.agreement_reference_hash(
+                runtime.session.protocol.index[agreement_uuid],
+            ),
+        )
+        runtime.logic.create_clause(section_uuid, "Serve the members.")
+        self.assertEqual(
+            runtime.logic.acceptance_badges(agreement_uuid)[0]["status"],
+            "outdated",
+        )
+
+    def test_every_ancestor_requires_a_current_acceptance(self):
+        runtime = self.runtime(9465)
+        root_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_subagreement(
+            root_uuid, "Operations",
+        ).value
+        runtime.logic.set_decision(root_uuid, "refused")
+
+        blocked = runtime.logic.create_subagreement(child_uuid, "Purchasing")
+
+        self.assertEqual(blocked.status, "error")
+        self.assertIn("Operations", blocked.reason)
+        runtime.logic.set_decision(root_uuid, "accepted")
+        runtime.logic.set_decision(child_uuid, "accepted")
+        allowed = runtime.logic.create_subagreement(
+            child_uuid, "Purchasing",
+        )
+        self.assertEqual(allowed.status, "ok")
+
+    def test_expired_parent_acceptance_blocks_a_subagreement(self):
+        runtime = self.runtime(9466)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        runtime.logic.set_decision(
+            parent_uuid, "accepted", "2000-01-01T00:00:00Z",
+        )
+
+        blocked = runtime.logic.create_subagreement(
+            parent_uuid, "Operations",
+        )
+
+        self.assertEqual(blocked.status, "error")
+        self.assertEqual(
+            runtime.logic.acceptance_badges(parent_uuid)[0]["status"],
+            "expired",
+        )
+
+    def test_refusal_cascades_to_every_joined_descendant(self):
+        runtime = self.runtime(9467)
+        root_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_subagreement(
+            root_uuid, "Operations",
+        ).value
+        grandchild_uuid = runtime.logic.create_subagreement(
+            child_uuid, "Purchasing",
+        ).value
+
+        refused = runtime.logic.set_decision(root_uuid, "refused")
+
+        self.assertEqual(refused.status, "ok")
+        for agreement_uuid in (root_uuid, child_uuid, grandchild_uuid):
+            own = runtime.logic.acceptance_badges(agreement_uuid)[0]
+            self.assertEqual(own["status"], "refused")
+        self.assertTrue(
+            runtime.logic.interaction_payload(
+                runtime.session.protocol.index[root_uuid],
+            )["allowed"],
+        )
+        self.assertFalse(
+            runtime.logic.interaction_payload(
+                runtime.session.protocol.index[child_uuid],
+            )["allowed"],
+        )
+        self.assertEqual(
+            [
+                item.data["title"]
+                for item in runtime.logic.descendant_agreements(root_uuid)
+            ],
+            ["Operations", "Purchasing"],
+        )
+
+    def test_blocked_subagreement_is_visible_but_all_mutations_are_rejected(self):
+        runtime = self.runtime(9468)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_subagreement(
+            parent_uuid, "Operations",
+        ).value
+        section_uuid = runtime.logic.create_section(
+            child_uuid, "Responsibilities",
+        ).value
+        runtime.logic.set_decision(parent_uuid, "refused")
+
+        selected = runtime.logic.select_agreement(child_uuid)
+        payload = runtime.logic.document_payload(child_uuid)
+
+        self.assertEqual(selected.status, "ok")
+        self.assertEqual(payload["agreement"]["uuid"], child_uuid)
+        self.assertFalse(payload["interaction"]["allowed"])
+        self.assertIn("Cooperative", payload["interaction"]["reason"])
+        for result in (
+            runtime.logic.rename_agreement(child_uuid, "Changed"),
+            runtime.logic.create_section(child_uuid, "Blocked"),
+            runtime.logic.rename_section(section_uuid, "Changed"),
+            runtime.logic.set_decision(child_uuid, "accepted"),
+            runtime.logic.delete_agreement(child_uuid),
+        ):
+            self.assertEqual(result.status, "error")
+            self.assertIn("Read-only", result.reason)
+
+    def test_reaccepting_requires_the_chain_to_be_restored_top_down(self):
+        runtime = self.runtime(9469)
+        root_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_subagreement(
+            root_uuid, "Operations",
+        ).value
+        grandchild_uuid = runtime.logic.create_subagreement(
+            child_uuid, "Purchasing",
+        ).value
+        runtime.logic.set_decision(root_uuid, "refused")
+
+        runtime.logic.set_decision(root_uuid, "accepted")
+
+        self.assertTrue(runtime.logic.interaction_payload(
+            runtime.session.protocol.index[child_uuid],
+        )["allowed"])
+        self.assertFalse(runtime.logic.interaction_payload(
+            runtime.session.protocol.index[grandchild_uuid],
+        )["allowed"])
+        runtime.logic.set_decision(child_uuid, "accepted")
+        self.assertTrue(runtime.logic.interaction_payload(
+            runtime.session.protocol.index[grandchild_uuid],
+        )["allowed"])
+
+    def test_subagreement_is_linked_but_remains_an_independent_topic(self):
+        runtime = self.runtime(9460)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+
+        child_uuid = runtime.logic.create_subagreement(
+            parent_uuid, "Finance circle",
+        ).value
+
+        parent = runtime.session.protocol.index[parent_uuid]
+        child = runtime.session.protocol.index[child_uuid]
+        links = runtime.logic.subagreement_links(parent)
+        self.assertEqual(child.parent_uuid, parent.parent_uuid)
+        self.assertEqual(child.data["parent_agreement_uuid"], parent_uuid)
+        self.assertEqual(len(links), 1)
+        self.assertEqual(links[0].data["child_agreement_uuid"], child_uuid)
+        self.assertEqual(
+            {item.uuid for item in runtime.logic.agreements()},
+            {parent_uuid, child_uuid},
+        )
+
+        organization = runtime.logic.organization_payload()
+        parent_view = next(
+            item for item in organization["roots"]
+            if item["uuid"] == parent_uuid
+        )
+        self.assertEqual(
+            [item["uuid"] for item in parent_view["children"]],
+            [child_uuid],
+        )
+
+    def test_joining_parent_does_not_join_its_subagreement(self):
+        left, right = self.runtime(9461), self.runtime(9462)
+        parent_uuid = left.logic.create_agreement("Cooperative").value
+        self.assertEqual(connect(left, right, parent_uuid)["status"], "ok")
+        badges = right.logic.acceptance_badges(parent_uuid)
+        self.assertEqual(len(badges), 2)
+        self.assertEqual(
+            {badge["status"] for badge in badges}, {"accepted"},
+        )
+        self.assertTrue(all("name" in badge for badge in badges))
+        self.assertTrue(all("picture" in badge for badge in badges))
+        child_uuid = left.logic.create_subagreement(
+            parent_uuid, "Finance circle",
+        ).value
+        link_uuid = left.logic.subagreement_links(
+            left.session.protocol.index[parent_uuid],
+        )[0].uuid
+        sync(left, right)
+
+        right_agreements = {item.uuid for item in right.logic.agreements()}
+        self.assertIn(parent_uuid, right_agreements)
+        self.assertNotIn(child_uuid, right_agreements)
+        payload = right.logic.document_payload(parent_uuid)
+        self.assertIn(
+            link_uuid,
+            {entry["node"]["uuid"] for entry in payload["proposed_nodes"]},
+        )
+        self.assertEqual(
+            right.logic.organization_payload()["roots"][0]["children"], [],
+        )
+
+        # Agreeing to the parent-side relationship makes the unit visible,
+        # but still does not mount the separately shared child topic.
+        accepted = right.logic.accept_peer_node(left.peer_addr, link_uuid)
+        self.assertEqual(accepted.status, "ok")
+        parent_view = right.logic.organization_payload()["roots"][0]
+        restricted = parent_view["children"][0]
+        self.assertEqual(restricted["uuid"], child_uuid)
+        self.assertFalse(restricted["joined"])
+
+        # The child invitation alone is not enough: accepting the new link
+        # changed the parent version, so its earlier acceptance is outdated.
+        self.assertEqual(connect(left, right, child_uuid)["status"], "ok")
+        self.assertNotIn(
+            child_uuid, {item.uuid for item in right.logic.agreements()},
+        )
+        own_badge = next(
+            item for item in right.logic.acceptance_badges(parent_uuid)
+            if item["is_self"]
+        )
+        self.assertEqual(own_badge["status"], "outdated")
+
+        # Renewing the parent acceptance unlocks the already cached child
+        # invitation; the child then receives its own acceptance record.
+        self.assertEqual(
+            right.logic.set_decision(parent_uuid, "accepted").status, "ok",
+        )
+        sync(left, right)
+        parent_view = next(
+            item for item in right.logic.organization_payload()["roots"]
+            if item["uuid"] == parent_uuid
+        )
+        self.assertTrue(parent_view["children"][0]["joined"])
+
+    def test_deleting_parent_promotes_child_instead_of_deleting_it(self):
+        runtime = self.runtime(9463)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_subagreement(
+            parent_uuid, "Finance circle",
+        ).value
+
+        result = runtime.logic.delete_agreement(parent_uuid)
+
+        self.assertEqual(result.status, "ok")
+        child = runtime.session.protocol.index[child_uuid]
+        self.assertFalse(child.deleted)
+        self.assertNotIn("parent_agreement_uuid", child.data)
+        self.assertEqual(
+            [item["uuid"] for item in runtime.logic.organization_payload()["roots"]],
+            [child_uuid],
+        )
+
     def test_reacting_resolves_a_divergence_on_a_clause(self):
         # Without reactions an agreement can reach a state it cannot leave:
         # two sides edit the same clause, both see divergence, and nothing

@@ -557,6 +557,12 @@ class AgreementLogic:
             and holder == self._identity_uuid
         )
 
+    def _holds_identity_of(self, agreement_uuid: str) -> bool:
+        """Same question about an agreement named only by uuid, which may be
+        one this session has not joined and so cannot answer for."""
+        agreement = self._node(agreement_uuid, "agreement")
+        return bool(agreement and self.holds_identity(agreement))
+
     def take_identity(self, agreement_uuid: str) -> SessionResult:
         """Install this participant as Identity.
 
@@ -1058,6 +1064,23 @@ class AgreementLogic:
         cannot answer for itself, so whoever holds its Identity answers for
         it, and decided_by records who that was.
         """
+        return self._answer_seat(role_uuid, agreement_uuid, "accepted")
+
+    def decline_seat(
+        self, role_uuid: str, agreement_uuid: str,
+    ) -> SessionResult:
+        """Turn down a seat offered to an agreement, on its behalf.
+
+        Without this an invitation an agreement does not want sits unanswered
+        forever, since the offer belongs to the parent and only its author may
+        withdraw it (2.3). The refusal is the agreement's own record, so it is
+        written by the only person who can speak for it.
+        """
+        return self._answer_seat(role_uuid, agreement_uuid, "refused")
+
+    def _answer_seat(
+        self, role_uuid: str, agreement_uuid: str, decision: str,
+    ) -> SessionResult:
         role = self._node(role_uuid, "agreement_role")
         if not role:
             return SessionResult("error", reason="role not found")
@@ -1068,36 +1091,51 @@ class AgreementLogic:
         if not self.holds_identity(seated):
             return SessionResult(
                 "error",
-                reason="only its Identity holder can seat that agreement",
+                reason="only its Identity holder can answer for that agreement",
             )
         if seated.uuid == parent.uuid:
             return SessionResult(
                 "error", reason="an agreement cannot be seated in itself",
             )
+        if not self._offer_for(role, seated.uuid):
+            # The offer may have reached this session only as a proposal, the
+            # same way a person's does. Answering it takes it up first.
+            self._adopt_offer_proposal(parent, role, seated.uuid)
+            role = self._node(role_uuid, "agreement_role") or role
+            parent = self._node(parent.uuid, "agreement") or parent
+            if not self._offer_for(role, seated.uuid):
+                return SessionResult(
+                    "error", reason="this role has not been offered to it",
+                )
+        if decision == "refused":
+            return self._record_role_decision(
+                parent, role, "refused", None,
+                actor_uuid=seated.uuid, decided_by=self._identity_uuid,
+            )
+        # Only accepting can close a loop, so the walk is spent only there.
         if self._creates_cycle(seated.uuid, parent.uuid):
             return SessionResult(
                 "error",
                 reason="that would make the organisation circular",
             )
-        if not self._offer_for(role, seated.uuid):
-            return SessionResult(
-                "error", reason="this role has not been offered to it",
-            )
-        answered = self.session.create_child(
-            role.uuid,
-            {
-                "type": "agreement_role_decision",
-                "actor_uuid": seated.uuid,
-                "decided_by": self._identity_uuid,
-                "decision": "accepted",
-                "decided_at": self._now(),
-                "reference_hash": self.role_reference_hash(parent, role),
-                "expires_at": None,
-            },
-            {},
+        answered = self._record_role_decision(
+            parent, role, "accepted", None,
+            actor_uuid=seated.uuid, decided_by=self._identity_uuid,
         )
         if answered.status != "ok":
             return answered
+        seated = self._node(agreement_uuid, "agreement") or seated
+        existing = next(
+            (
+                holding for holding in self.parent_holdings(seated)
+                if holding.data.get("role_uuid") == role.uuid
+            ),
+            None,
+        )
+        if existing:
+            # Reconsidering a refusal: the answer is rewritten and the seat it
+            # already names is the same seat.
+            return SessionResult("ok", value=existing.uuid, effects=answered.effects)
         held = self.session.create_child(
             seated.uuid,
             {
@@ -1118,6 +1156,51 @@ class AgreementLogic:
             value=held.value.uuid,
             effects=[*answered.effects, *held.effects],
         )
+
+    def seat_offers(self, agreement: ProtocolNode) -> list[dict]:
+        """Seats offered to this agreement that it does not yet hold.
+
+        An invitation to an agreement is written on the *parent's* page, so
+        without collecting it here the only person who could see it is
+        somebody looking at the parent - who need not be the person entitled
+        to answer. The answer belongs to whoever holds this agreement's
+        Identity, so the invitation is put where that answer is made.
+        """
+        held = {
+            str(holding.data.get("role_uuid") or "").strip()
+            for holding in self.parent_holdings(agreement)
+        }
+        offers = []
+        for parent in self.agreements():
+            if parent.uuid == agreement.uuid:
+                continue
+            for role in self.roles(parent):
+                if role.uuid in held:
+                    continue
+                offer = self._offer_for(role, agreement.uuid)
+                if offer and offer.data.get("revoked_at"):
+                    continue
+                if not offer and not self._offer_proposed_to(
+                    parent, role, agreement.uuid,
+                ):
+                    continue
+                answer = self._role_decision_for(role, agreement.uuid)
+                offers.append({
+                    "role_uuid": role.uuid,
+                    "role_name": role.data.get("name") or "Untitled role",
+                    "role_purpose": role.data.get("purpose") or "",
+                    "agreement_uuid": parent.uuid,
+                    "title": parent.data.get("title") or "Untitled agreement",
+                    "offered_at": offer.data.get("offered_at") if offer else None,
+                    # Not adopted here yet. Answering adopts it, so this is a
+                    # note about where the record is, not a reason to wait.
+                    "proposed": not offer,
+                    "answer": (answer.data.get("decision") if answer else ""),
+                    # An accepted seat that would close a loop is shown and
+                    # refused, rather than hidden as if it had never come.
+                    "circular": self._creates_cycle(agreement.uuid, parent.uuid),
+                })
+        return offers
 
     def unseat_agreement(
         self, role_uuid: str, agreement_uuid: str,
@@ -1228,51 +1311,31 @@ class AgreementLogic:
         role: ProtocolNode,
         decision: str,
         expires_at: str | None,
+        actor_uuid: str | None = None,
+        decided_by: str | None = None,
     ) -> SessionResult:
+        """One answer per actor per role, rewritten rather than added to.
+
+        An actor who refuses and later accepts has changed their mind, not
+        answered twice, and two decision nodes for one actor would leave
+        which of them counts up to iteration order. `decided_by` is set only
+        for an Agreement actor, which cannot answer for itself.
+        """
+        actor = actor_uuid or self._identity_uuid
         data = {
             "type": "agreement_role_decision",
-            "actor_uuid": self._identity_uuid,
+            "actor_uuid": actor,
             "decision": decision,
             "decided_at": self._now(),
             "reference_hash": self.role_reference_hash(agreement, role),
             "expires_at": expires_at,
         }
-        existing = self._own_role_decision(role)
+        if decided_by:
+            data["decided_by"] = decided_by
+        existing = self._role_decision_for(role, actor)
         if existing:
             return self.session.modify(existing.uuid, data, existing.weights)
         return self.session.create_child(role.uuid, data, {})
-
-    def _reaffirm_holdings(self, agreement_uuid: str) -> SessionResult:
-        """Re-sign this participant's own roles against the version they made.
-
-        Only for a change this session makes to a document it is required to
-        hold a current acceptance of; ordinary edits deliberately leave
-        everyone outdated, the author included, so that a change is read
-        before it is agreed to again.
-
-        Nodes are refetched each turn because modifying one replaces the
-        object rather than mutating it, so anything held across a write is
-        stale.
-        """
-        effects = []
-        agreement = self._node(agreement_uuid, "agreement")
-        role_uuids = [role.uuid for role in self.roles(agreement)] if agreement else []
-        for role_uuid in role_uuids:
-            agreement = self._node(agreement_uuid, "agreement")
-            role = self._node(role_uuid, "agreement_role")
-            if not agreement or not role:
-                continue
-            if not self._offer_for(role, self._identity_uuid):
-                continue
-            own = self._own_role_decision(role)
-            if not own or own.data.get("decision") != "accepted":
-                continue
-            renewed = self._record_role_decision(
-                agreement, role, "accepted", own.data.get("expires_at"),
-            )
-            if renewed.status == "ok":
-                effects.extend(renewed.effects)
-        return SessionResult("ok", effects=effects)
 
     def _adopt_offer_proposal(
         self, agreement: ProtocolNode, role: ProtocolNode, actor_uuid: str,
@@ -1328,13 +1391,17 @@ class AgreementLogic:
         )
 
     def _own_role_decision(self, role: ProtocolNode) -> ProtocolNode | None:
+        return self._role_decision_for(role, self._identity_uuid)
+
+    def _role_decision_for(
+        self, role: ProtocolNode, actor_uuid: str,
+    ) -> ProtocolNode | None:
         return next(
             (
                 child for child in role.live_children()
                 if (
                     child.data.get("type") == "agreement_role_decision"
-                    and child.data.get("actor_uuid")
-                    == self._identity_uuid
+                    and child.data.get("actor_uuid") == actor_uuid
                 )
             ),
             None,
@@ -1385,15 +1452,28 @@ class AgreementLogic:
                 # record stays so the offer can be revived, but there is no
                 # longer anyone involved to show.
                 continue
+            # An Agreement actor is never among the people on this topic, so
+            # the member test below would call every one of them a stranger.
+            # Its standing is read from the answer given on its behalf.
+            is_agreement = bool(
+                offer and offer.data.get("actor_kind") == "agreement"
+            )
             if revoked:
                 status = "revoked"
             elif not offer:
                 # An answer nobody offered: somebody asking to take this.
                 status = "requested"
-            elif not member:
+            elif not member and not is_agreement:
                 status = "uninvited" if known else "unobserved"
             elif not record:
-                status = "pending"
+                # For an agreement, no answer means either that nobody has
+                # given one or that whoever could is out of reach - and only
+                # its Identity holder can tell those apart.
+                status = (
+                    "unobserved" if is_agreement and not self._holds_identity_of(
+                        actor_uuid,
+                    ) else "pending"
+                )
             elif record.get("decision") == "refused":
                 status = "refused"
             elif self._is_expired(record.get("expires_at")):
@@ -1419,7 +1499,7 @@ class AgreementLogic:
                 "confirmed_elsewhere": (
                     status == "requested"
                     and actor_uuid == self._identity_uuid
-                    and self._offer_proposed_to_me(agreement, role)
+                    and self._offer_proposed_to(agreement, role, actor_uuid)
                 ),
                 "name": (
                     (seated.data.get("title") or "Untitled agreement")
@@ -1451,11 +1531,11 @@ class AgreementLogic:
             })
         return sorted(holders, key=lambda item: (item["status"], item["name"]))
 
-    def _offer_proposed_to_me(
-        self, agreement: ProtocolNode, role: ProtocolNode,
+    def _offer_proposed_to(
+        self, agreement: ProtocolNode, role: ProtocolNode, actor_uuid: str,
     ) -> bool:
-        """Whether some peer holds an offer of this role to this session."""
-        mine = self._identity_uuid
+        """Whether some peer holds an offer of this role to that actor."""
+        mine = actor_uuid
         for address in self.session.peer_addresses(agreement.uuid):
             peer_topic = self.session.get_cached_peer_subtree(
                 address, agreement.uuid,
@@ -1482,11 +1562,17 @@ class AgreementLogic:
         third party's answer is hearsay, and nothing signs content, so it is
         not counted. That is also what makes an unreachable answer reportable
         as unobserved rather than invented.
+
+        An Agreement actor has no replica of its own - it cannot answer for
+        itself - so the replica that vouches for it is the one belonging to
+        whoever answered on its behalf. Same rule, applied to who gave the
+        answer rather than to whose answer it is.
         """
         found: dict[str, dict] = {}
         own = self._own_role_decision(role)
         if own:
             found[self._identity_uuid] = dict(own.data)
+        found.update(self._answers_given_by(role, self._identity_uuid))
         members = {
             address: member
             for member in self._topic_members(agreement.uuid)
@@ -1512,7 +1598,24 @@ class AgreementLogic:
                     and child.data.get("actor_uuid") == member["uuid"]
                 ):
                     found[member["uuid"]] = dict(child.data)
+            found.update(self._answers_given_by(peer_role, member["uuid"]))
         return found
+
+    @staticmethod
+    def _answers_given_by(role: ProtocolNode, actor_uuid: str) -> dict[str, dict]:
+        """Answers this actor recorded on some agreement's behalf.
+
+        `decided_by` is set only where an actor could not answer for itself,
+        so its presence is what marks an answer as given rather than owned.
+        """
+        return {
+            str(child.data.get("actor_uuid") or ""): dict(child.data)
+            for child in role.live_children()
+            if (
+                child.data.get("type") == "agreement_role_decision"
+                and child.data.get("decided_by") == actor_uuid
+            )
+        }
 
     @staticmethod
     def _find_in_subtree(
@@ -1726,6 +1829,10 @@ class AgreementLogic:
             # holds - never hidden, or deleting the first parent would
             # take away something load-bearing nobody could see.
             "parents": self.parent_payload(selected) if selected else [],
+            # Seats offered to this agreement. They are written on the
+            # parent's page, so they are brought here, where the only person
+            # who can answer them is looking.
+            "seat_offers": self.seat_offers(selected) if selected else [],
             "interaction": (
                 self.interaction_payload(selected) if selected else {
                     "allowed": False, "reason": "",

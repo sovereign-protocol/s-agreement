@@ -485,6 +485,42 @@ The parts worth recording:
 - **A request is not an actor.** An answer with no offer behind it is somebody
   asking to join (§2.4b), so it leaves the count where it was — which is what
   keeps a template from being promoted by a stranger.
+- **Copying lives in the flow that makes a new agreement**, not on an existing
+  one's page — the Cockpit's *New agreement* modal offers *Copy from
+  (optional)*, the same shape *New board* already had. An action whose result
+  is a different agreement has no business sitting on this one's page. It also
+  puts the choice where it is actually made: you decide where an agreement
+  starts when you start it.
+
+### Step 5 — Answering for an agreement **[DONE]**
+
+Not in the original staging, and needed once an agreement really was an
+actor: an agreement could be offered a seat, but nothing showed it the offer.
+
+- **An invitation is written on the parent's page and answered on the
+  child's.** Those are two different people's pages — the parent's Identity
+  holder writes the offer, the child's answers it, and they need not be the
+  same person or even joined to the same topics. `seat_offers` collects the
+  offers naming this agreement so the answer is made where the authority to
+  make it lives. Invitations reaching this session only as proposals are
+  included, since answering one adopts it, exactly as for a person (§2.1).
+- **`decline_seat` completes the pair.** Without it an unwanted invitation
+  sits forever: the offer belongs to the parent and only its author may
+  withdraw it (§2.3), so the child needs a refusal of its own. A declined seat
+  stays listed, because turning something down is an answer that can change.
+- **One answer per actor per role.** `_record_role_decision` now rewrites an
+  actor's existing decision instead of adding a second, and `seat_agreement`
+  goes through it. Reconsidering a refusal used to leave two decision nodes
+  for one actor, with which of them counted decided by iteration order.
+- **An Agreement actor's answer is vouched for by whoever gave it.** The
+  credibility rule (§2.6) reads an answer only from the replica of the person
+  it belongs to — but an agreement has no replica and cannot answer for
+  itself, so every seated subagreement was reported `unobserved`, including
+  ones this very session had just seated. The rule now applies to the person
+  named in `decided_by`, which is the same rule pointed at the actor who
+  actually acted. `role_holders` also stops routing Agreement actors through
+  the not-a-topic-member branch, which had called every one of them a
+  stranger. Found by looking at the badges, not by a test.
 
 ## 4. UI
 
@@ -514,38 +550,45 @@ full re-render per payload.
 │ · Filing annual accounts    · Payment approvals     │
 │ + add                       + add                   │
 │                                                     │
-│ Held by  ● Andre  accepted 3 Jul, until 31 Dec      │
-│          ○ Maria  offered, not yet decided          │
-│          ◌ Ines   unobserved                        │
-│ + offer to…                          [Accept][Refuse]│
+│ Held by  (A) Andre  (M) Maria  (👥) Team A          │
+│ + offer to…                                         │
 └─────────────────────────────────────────────────────┘
 ```
 
 **[DONE]** The region is titled *Role Definitions & Invitations*, and it is
 the definition rather than the doing. It sits last: the agreement's text
-comes first (collapsible, since once a document is settled the interesting
-part is the structure below it), then who is in it — seats held and
-participants — then what it expects of them.
+comes first, then who is in it — seats held, seats offered, participants —
+then what it expects of them.
+
+The text collapses behind **a caret on the title itself**, and nothing more.
+An earlier version put a labelled *Agreement text* toggle above the sections;
+the label only repeated what was directly beneath it, and it read as a
+heading for a region rather than as a control on the title.
 
 - Name and purpose use the existing `editable` in-place pattern — click,
   commit on blur or Enter, revert on Escape. No modal between reader and text.
 - Accountabilities and domains reuse the clause affordances: add composer,
   delete, reorder.
-- **Held by** lists who has been invited and where each stands. Taking a
-  role or stepping out of one is *not* here — it is on your own line in
-  Participants (§4.5), so one place answers "what is this role" and
-  another answers "what am I doing about it".
+- **Held by** is a line of badges — a face and a name each, the group mark
+  for an agreement — and nothing else on the page. When somebody answered,
+  against which version, who offered it and until when are questions you ask
+  about *one* holder, so they are in the badge's tooltip rather than in
+  columns of small type read across a row. Status is carried by how the badge
+  looks, in the same vocabulary as the participant chips (§4.3).
+- Taking a role or stepping out of one is *not* here — it is on your own line
+  in Participants (§4.5), so one place answers "what is this role" and another
+  answers "what am I doing about it".
 - The only controls are the Identity holder's, because inviting and
-  withdrawing are theirs alone and have nowhere else to live: an
-  `Offer to…` picker, **Confirm** on a request, and **Revoke** where there
-  is an offer to withdraw. Confirm is always visible — somebody is waiting
-  on you; Revoke waits for a hover, like Delete.
+  withdrawing are theirs alone and have nowhere else to live: an `Offer to…`
+  picker, and one mark on the badge — **✓** to confirm a request, **×** to
+  withdraw an offer — revealed on hover the way Delete is, so the line reads
+  as people rather than as a row of controls.
 - A vacant role is normal, not an error state — "Nobody invited yet",
   neutral styling.
 
 Confirm cannot be dropped in favour of the picker alone: the picker
 excludes anybody already listed under *Held by*, and a requester is listed
-there. Without the button a request is unanswerable.
+there. Without it a request is unanswerable.
 
 ### 4.3 Holder status
 
@@ -634,11 +677,8 @@ home. Additions:
   not in the tree
 
 The agreement's own page carries the same badge on a state line under the
-title, with a sentence saying what the count means and the *Duplicate as
-template* action. The badge is not a control: there is no mode to switch,
-only a situation to report. Duplicate sits on that line because it is the one
-thing you can do about the state, and it stays available on a read-only
-agreement, since it writes only a new agreement of your own.
+title, with a sentence saying what the count means. The badge is not a
+control: there is no mode to switch, only a situation to report.
 
 ### 4.7 Creating a sub-agreement becomes filling a seat
 

@@ -245,12 +245,39 @@ class AssetTests(unittest.TestCase):
             self.assertIn(marker, self.agreement)
 
     def test_inviting_and_withdrawing_belong_to_identity_alone(self):
-        # A request is somebody waiting on you, so answering it is
-        # always visible; withdrawing an offer is destructive and rare,
-        # so it waits for a hover the way Delete does.
+        # Both live on the holder's badge, revealed on hover the way Delete
+        # is, so a role reads as a line of people rather than of controls.
         self.assertIn("payloadState.holds_identity", self.agreement)
-        self.assertIn("role-confirm", self.agreement)
-        self.assertIn("role-revoke", self.agreement)
+        self.assertIn("holder-action", self.agreement)
+        self.assertIn("/api/agreement/roles/revoke", self.agreement)
+        self.assertIn("/api/agreement/roles/offer", self.agreement)
+
+    def test_who_holds_a_role_is_a_badge_and_the_rest_is_a_tooltip(self):
+        # The line shows a face and a name; when they answered, against which
+        # version and who offered it are one holder's details, so they belong
+        # in the tooltip rather than in columns nobody reads across.
+        self.assertIn("holder-badges", self.agreement)
+        self.assertIn("avatarFor(holder)", self.agreement)
+        self.assertIn("badge.title", self.agreement)
+
+    def test_a_seat_offered_to_this_agreement_is_answered_here(self):
+        # The offer is written on the parent's page, but only this
+        # agreement's Identity holder may answer it, and they need not be
+        # looking at the parent.
+        self.assertIn("payload.seat_offers", self.agreement)
+        self.assertIn("/api/agreement/roles/decline_seat", self.agreement)
+
+    def test_the_agreement_text_collapses_from_the_title(self):
+        # A caret after the name and nothing else: what it folds is directly
+        # below it, so a label would only repeat the page.
+        self.assertIn("element-toggle", self.agreement)
+        self.assertNotIn("content-toggle", self.agreement)
+
+    def test_copying_an_agreement_is_not_offered_on_its_own_page(self):
+        # Starting a new agreement from this one is a choice made where a new
+        # agreement is made, which is the cockpit's create flow.
+        self.assertNotIn("state-duplicate", self.agreement)
+        self.assertNotIn("agreements/clone", self.agreement)
 
     def test_assets_never_navigate_to_the_bare_root_with_a_query(self):
         # "/" serves whichever application is primary, so a root-relative link

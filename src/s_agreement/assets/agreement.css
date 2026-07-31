@@ -454,44 +454,58 @@ h2.element-label { margin: 0 0 4px; }
   color: var(--text-muted);
 }
 .role-unheld { margin: 2px 0; font-size: 13px; color: var(--text-muted); }
-.role-holder {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 2px 0;
-  font-size: 13px;
-}
-.role-holder-name { font-weight: 600; }
-.role-holder-status { color: var(--text-muted); font-size: 12px; }
-.role-holder[data-status="refused"] .role-holder-name {
-  text-decoration: line-through;
-  color: var(--text-muted);
-}
-.role-holder[data-status="expired"] .role-holder-status,
-.role-holder[data-status="outdated"] .role-holder-status { color: #f59e0b; }
-/* Not styled like "pending": this is "I cannot see", not "they have not
-   answered", and the two must not read as the same thing. */
-.role-holder[data-status="unobserved"] .role-holder-name,
-.role-holder[data-status="unobserved"] .role-holder-status {
-  font-style: italic;
-  opacity: 0.65;
+
+/* Who holds a role is a line of faces and names. Everything else about the
+   holding - when it was answered, against which version, who offered it - is
+   a question you ask about one of them, so it is in the tooltip rather than
+   in columns of small type nobody reads across. Status is carried by how the
+   badge looks, using the same vocabulary as the participant chips. */
+.holder-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.holder-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px 2px 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
   cursor: help;
 }
-.role-holder[data-status="requested"] .role-holder-status { color: var(--proposal); }
-.role-holder[data-status="revoked"] .role-holder-name,
-.role-holder[data-status="revoked"] .role-holder-status {
-  opacity: 0.6;
+.holder-badge .acceptance-avatar { width: 18px; height: 18px; }
+.holder-name { font-weight: 600; }
+.holder-badge[data-status="accepted"] {
+  border-color: var(--proposal);
+  color: var(--proposal);
 }
-.role-revoke, .role-offer-picker, .role-confirm {
-  font-size: 12px;
-  padding: 2px 6px;
+.holder-badge[data-status="expired"],
+.holder-badge[data-status="outdated"] { border-color: #f59e0b; color: #f59e0b; }
+.holder-badge[data-status="requested"] { border-style: dashed; border-color: var(--proposal); }
+.holder-badge[data-status="refused"] .holder-name { text-decoration: line-through; }
+.holder-badge[data-status="refused"],
+.holder-badge[data-status="revoked"] { opacity: 0.6; }
+/* Not styled like "pending": this is "I cannot see", not "they have not
+   answered", and the two must not read as the same thing. */
+.holder-badge[data-status="unobserved"] { font-style: italic; opacity: 0.65; }
+.holder-badge[data-status="uninvited"] { border-style: dotted; }
+.holder-badge.agreement-link { cursor: pointer; }
+.holder-badge.agreement-link:hover { border-color: var(--proposal); }
+/* Withdrawing is destructive and rare, so it waits for a hover the way
+   Delete does - and stays reachable by keyboard, which is why focus-within
+   shows it too. */
+.holder-action {
+  opacity: 0;
+  padding: 0 3px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
 }
-.role-revoke { opacity: 0; }
-.role-holder:hover .role-revoke, .role-revoke:focus-visible { opacity: 1; }
-/* A request is somebody waiting on you, so the answer to it is always
-   visible rather than waiting for a hover. */
-.role-confirm { border-color: var(--proposal); color: var(--proposal); }
-.role-offer-picker { margin-top: 6px; }
+.holder-badge:hover .holder-action,
+.holder-badge:focus-within .holder-action { opacity: 0.75; }
+.holder-action:hover { opacity: 1; }
+.role-offer-picker { font-size: 12px; padding: 2px 6px; margin-top: 6px; }
 
 .role-answer-prompt { flex: 1; min-width: 0; }
 
@@ -523,6 +537,21 @@ h2.element-label { margin: 0 0 4px; }
 .seat[data-state="blocked"] .seat-state { opacity: 0.6; }
 .seat[data-state="blocked"] .seat-state { color: #f59e0b; }
 .seat .element-move { opacity: 1; }
+
+/* Seats offered to this agreement. Written on the parent's page, answered
+   here, because only this agreement's Identity holder may answer them. */
+.seat-offers { margin: 4px 0; padding: 0 4px 8px; }
+.seat-offer {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-left: 22px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.seat-offer[data-state="refused"] .seat-name { opacity: 0.6; }
+.seat-accept, .seat-decline { font-size: 12px; padding: 2px 8px; cursor: pointer; }
+.seat-accept { border-color: var(--proposal); color: var(--proposal); }
 /* A seat home leaves out still has to be visible in the tree. */
 .other-parents {
   grid-column: 1 / -1;
@@ -530,19 +559,28 @@ h2.element-label { margin: 0 0 4px; }
   font-size: 11px;
 }
 
-/* The agreement text collapses, because once it is settled the interesting
-   part is the structure below it. */
-.content-toggle {
+/* The agreement text collapses behind a caret on the title itself, because
+   once a document is settled the interesting part is the structure below it.
+   A caret and nothing more: what it folds is directly underneath, so a label
+   saying so would only repeat the page. It shares the title's grid cell so
+   every row's actions stay in the same column. */
+.element-heading {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.element-toggle {
   border: none;
-  padding: 2px 4px;
-  margin-left: 18px;
+  padding: 0 3px;
+  background: transparent;
   color: var(--text-muted);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 13px;
+  line-height: 1;
   cursor: pointer;
 }
-.content.is-collapsed > *:not(.content-toggle) { display: none; }
+.element-toggle:hover { color: var(--text); }
+.content.is-collapsed { display: none; }
 
 /* Template or working is how many actors are in it, so this reports rather
    than offers: the badge is not a control and there is nothing to switch.
@@ -572,18 +610,11 @@ h2.element-label { margin: 0 0 4px; }
   border-color: #f59e0b;
 }
 .state-note { color: var(--text-muted); }
+/* Copying lives in the flow that makes a new agreement, not here: an action
+   about some other agreement has no business on this one's page. */
 /* In the tree the row is a name and a count, so an extra fact takes its own
    line underneath - the same shape as the other markers there. */
 .organization-row .state-badge {
   grid-column: 1 / -1;
   justify-self: start;
-}
-/* Pushed away from the note: copying is the one action on this line, and it
-   makes a new agreement rather than changing this one. */
-.state-duplicate {
-  margin-left: auto;
-  padding: 3px 9px;
-  border-radius: 5px;
-  font-size: 12px;
-  cursor: pointer;
 }

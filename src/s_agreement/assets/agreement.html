@@ -134,7 +134,7 @@
     // is something to react to and stays hidden otherwise.
     const elementRow = ({node, tag, field, rename, addLabel, onAdd, onDelete,
                          deleteTitle, deleteMessage, index, count, onMove,
-                         proposed = false, interactive = true}) => {
+                         toggle, proposed = false, interactive = true}) => {
       const row = document.createElement('div');
       row.className = 'element-row';
       row.classList.toggle('is-proposed', proposed);
@@ -248,7 +248,32 @@
         actions.append(remove);
       }
 
-      row.append(lamp, label, actions);
+      // A caret right after the name, and nothing else: what it hides is
+      // directly below it, so a word saying so would only repeat the page.
+      // It shares the label's grid cell rather than taking one of its own,
+      // which would put every other row's actions in a different column.
+      let heading = label;
+      if (toggle) {
+        heading = document.createElement('span');
+        heading.className = 'element-heading';
+        const caret = document.createElement('button');
+        caret.type = 'button';
+        caret.className = 'element-toggle';
+        const draw = open => {
+          caret.textContent = open ? '▾' : '▸';
+          caret.title = open ? 'Hide the text' : 'Show the text';
+          caret.setAttribute('aria-expanded', String(open));
+        };
+        draw(toggle.expanded);
+        caret.onclick = () => {
+          const open = caret.getAttribute('aria-expanded') !== 'true';
+          draw(open);
+          toggle.onToggle(open);
+        };
+        heading.append(label, caret);
+      }
+
+      row.append(lamp, heading, actions);
       return row;
     };
 
@@ -380,6 +405,26 @@
     // control over them.
     const ACTOR_MARK = {individual: '\u{1F464}', agreement: '\u{1F465}'};
 
+    // A picture where there is one, an initial for a person without, the
+    // group mark for an agreement. Shared, so an actor looks the same
+    // wherever it is drawn.
+    const avatarFor = (person) => {
+      if (person.picture) {
+        const image = document.createElement('img');
+        image.className = 'acceptance-avatar';
+        image.src = person.picture;
+        image.alt = '';
+        return image;
+      }
+      const mark = document.createElement('span');
+      mark.className = 'acceptance-avatar acceptance-initials';
+      mark.dataset.kind = person.actor_kind || 'individual';
+      mark.textContent = person.actor_kind === 'agreement'
+        ? ACTOR_MARK.agreement
+        : (person.name || '?').trim().slice(0, 1).toUpperCase();
+      return mark;
+    };
+
     const renderParticipants = (participants, identity, interactive) => {
       const section = document.createElement('section');
       section.className = 'acceptance-panel';
@@ -392,23 +437,6 @@
         'Each role is accepted against a version of this agreement.';
       heading.append(title, reference);
       section.append(heading);
-
-      const avatarFor = (person) => {
-        if (person.picture) {
-          const image = document.createElement('img');
-          image.className = 'acceptance-avatar';
-          image.src = person.picture;
-          image.alt = '';
-          return image;
-        }
-        const mark = document.createElement('span');
-        mark.className = 'acceptance-avatar acceptance-initials';
-        mark.dataset.kind = person.actor_kind || 'individual';
-        mark.textContent = person.actor_kind === 'agreement'
-          ? ACTOR_MARK.agreement
-          : (person.name || '?').trim().slice(0, 1).toUpperCase();
-        return mark;
-      };
 
       // Identity is a role like any other here, drawn with a key so it can
       // be told apart at a glance.
@@ -674,39 +702,130 @@
       },
     };
 
+    // Copying lives where a new agreement is made - the cockpit's "New
+    // agreement" flow offers this one as a starting point, the same way a
+    // new board does - rather than here, where it would be an action about
+    // some other agreement sitting on this one's page.
     const renderState = (state) => {
       const line = document.createElement('p');
       line.className = 'agreement-state';
       const badge = STATE_BADGE[state];
-      if (badge) {
-        const chip = document.createElement('span');
-        chip.className = 'state-badge';
-        chip.dataset.state = state;
-        chip.textContent = badge.label;
-        chip.title = badge.title;
-        const note = document.createElement('span');
-        note.className = 'state-note';
-        note.textContent = badge.note;
-        line.append(chip, note);
-      }
-      // Copying reads this agreement and writes a new one of your own, so it
-      // stays available even where nothing here can be touched.
-      const duplicate = document.createElement('button');
-      duplicate.type = 'button';
-      duplicate.className = 'state-duplicate';
-      duplicate.textContent = 'Duplicate as template';
-      duplicate.title =
-        'Copy the text and roles into a new agreement with nobody in it';
-      duplicate.onclick = async () => {
-        try {
-          const result = await api('/api/agreement/agreements/clone',
-            {agreement_uuid: current.uuid});
-          await selectAgreement(result.value);
-          showToast('Copied into a template');
-        } catch (error) { showToast(error.message, true); }
-      };
-      line.append(duplicate);
+      if (!badge) return null;
+      const chip = document.createElement('span');
+      chip.className = 'state-badge';
+      chip.dataset.state = state;
+      chip.textContent = badge.label;
+      chip.title = badge.title;
+      const note = document.createElement('span');
+      note.className = 'state-note';
+      note.textContent = badge.note;
+      line.append(chip, note);
       return line;
+    };
+
+    // A seat offered to this agreement is written on the parent's page, but
+    // the only person who may answer it is whoever holds this agreement's
+    // Identity - who need not be looking at the parent, or joined to it at
+    // all. So the invitation is brought here, next to the seats it would
+    // join.
+    const renderSeatOffers = (offers, interactive) => {
+      const section = document.createElement('section');
+      section.className = 'seat-offers';
+      if (!offers.length) return section;
+      const heading = document.createElement('div');
+      heading.className = 'roles-heading';
+      const title = document.createElement('h3');
+      title.textContent = 'Invited to';
+      const explanation = document.createElement('p');
+      explanation.textContent = payloadState.holds_identity
+        ? 'Roles this agreement has been offered. You speak for it, so the'
+          + ' answer is yours.'
+        : 'Roles this agreement has been offered. Its Identity holder'
+          + ' answers these.';
+      heading.append(title, explanation);
+      section.append(heading);
+
+      for (const offer of offers) {
+        const row = document.createElement('div');
+        row.className = 'seat-offer';
+        row.dataset.state = offer.answer || 'unanswered';
+        const name = document.createElement('span');
+        name.className = 'seat-name agreement-link';
+        name.textContent = `${offer.role_name} in ${offer.title}`;
+        name.tabIndex = 0;
+        name.title = offer.role_purpose
+          ? `${offer.role_purpose} — open ${offer.title}`
+          : `Open ${offer.title}`;
+        const open = () => selectAgreement(offer.agreement_uuid);
+        name.onclick = open;
+        name.onkeydown = event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            open();
+          }
+        };
+        row.append(name);
+        if (offer.answer === 'refused') {
+          const state = document.createElement('span');
+          state.className = 'seat-state';
+          state.textContent = 'declined';
+          state.title = 'This agreement turned the seat down. Accept to'
+            + ' change that.';
+          row.append(state);
+        }
+        if (offer.circular) {
+          const state = document.createElement('span');
+          state.className = 'seat-state';
+          state.textContent = 'would loop';
+          state.title = `${offer.title} already sits below this agreement,`
+            + ' so taking this seat would make the organisation circular.';
+          row.append(state);
+        }
+        if (interactive && payloadState.holds_identity && !offer.circular) {
+          const accept = document.createElement('button');
+          accept.type = 'button';
+          accept.className = 'seat-accept';
+          accept.textContent = 'Accept';
+          accept.onclick = async () => {
+            accept.disabled = true;
+            try {
+              await api('/api/agreement/roles/seat', {
+                role_uuid: offer.role_uuid,
+                agreement_uuid: current.uuid,
+              });
+              await load();
+              showToast(`Now holding ${offer.role_name} in ${offer.title}`);
+            } catch (error) {
+              accept.disabled = false;
+              showToast(error.message, true);
+            }
+          };
+          row.append(accept);
+        }
+        if (interactive && payloadState.holds_identity
+            && offer.answer !== 'refused') {
+          const decline = document.createElement('button');
+          decline.type = 'button';
+          decline.className = 'seat-decline';
+          decline.textContent = 'Decline';
+          decline.onclick = async () => {
+            decline.disabled = true;
+            try {
+              await api('/api/agreement/roles/decline_seat', {
+                role_uuid: offer.role_uuid,
+                agreement_uuid: current.uuid,
+              });
+              await load();
+            } catch (error) {
+              decline.disabled = false;
+              showToast(error.message, true);
+            }
+          };
+          row.append(decline);
+        }
+        section.append(row);
+      }
+      return section;
     };
 
     const renderSeats = (parents, interactive) => {
@@ -907,56 +1026,80 @@
         none.textContent = 'Nobody invited yet';
         held.append(none);
       }
+      // A line of faces and names, and nothing else on the page. Who holds a
+      // role is a glance; when they answered, against which version, and who
+      // offered it are questions you only ask about one of them, so they
+      // live in the tooltip rather than in six columns of small type.
+      const badges = document.createElement('div');
+      badges.className = 'holder-badges';
       for (const holder of holders) {
-        const row = document.createElement('div');
-        row.className = 'role-holder';
-        row.dataset.status = holder.status;
-        const who = document.createElement('span');
-        who.className = 'role-holder-name';
-        who.textContent = holder.is_self ? 'You' : holder.name;
-        const state = document.createElement('span');
-        state.className = 'role-holder-status';
-        state.textContent = HOLDER_STATUS[holder.status] || holder.status;
+        const badge = document.createElement('span');
+        badge.className = 'holder-badge';
+        badge.dataset.status = holder.status;
+        badge.dataset.actorKind = holder.actor_kind;
+        const name = document.createElement('span');
+        name.className = 'holder-name';
+        name.textContent = holder.is_self ? 'You' : holder.name;
+        badge.append(avatarFor(holder), name);
+
+        const detail = [HOLDER_STATUS[holder.status] || holder.status];
         if (holder.status === 'unobserved') {
-          state.title =
-            'You do not sync with this person, so you cannot see their answer.';
-        } else if (holder.decided_at) {
-          state.title = new Date(holder.decided_at).toLocaleString();
+          detail.push(
+            'You do not sync with them, so you cannot see their answer.',
+          );
         }
+        if (holder.actor_kind === 'agreement' && !holder.joined) {
+          detail.push(
+            'Invited separately; you have not joined that agreement.',
+          );
+        }
+        if (holder.offered_at) {
+          detail.push(
+            `Offered ${new Date(holder.offered_at).toLocaleString()}`,
+          );
+        }
+        if (holder.decided_at) {
+          detail.push(
+            `Answered ${new Date(holder.decided_at).toLocaleString()}`,
+          );
+        }
+        if (holder.expires_at) {
+          detail.push(
+            `Until ${new Date(holder.expires_at).toLocaleString()}`,
+          );
+        }
+        badge.title = `${holder.is_self ? 'You' : holder.name} — `
+          + detail.map(part => part.replace(/\.$/, '')).join('. ');
+
         // A seat filled by another agreement opens it. Structure is made by
         // filling a role, so this is where the organisation is walked.
-        if (holder.actor_kind === 'agreement') {
-          row.dataset.actorKind = 'agreement';
-          if (holder.joined) {
-            who.className = 'role-holder-name agreement-link';
-            who.tabIndex = 0;
-            who.title = `Open ${holder.name}`;
-            const open = () => selectAgreement(holder.actor_uuid);
-            who.onclick = open;
-            who.onkeydown = event => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                open();
-              }
-            };
-          } else {
-            state.textContent = 'separate membership';
-            state.title =
-              'This subagreement is invited separately; you have not joined it.';
-          }
+        if (holder.actor_kind === 'agreement' && holder.joined) {
+          badge.classList.add('agreement-link');
+          badge.tabIndex = 0;
+          const open = () => selectAgreement(holder.actor_uuid);
+          badge.onclick = open;
+          badge.onkeydown = event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              open();
+            }
+          };
+          badge.title += `. Click to open ${holder.name}`;
         }
-        row.append(who, state);
 
-        // Confirming somebody's request is an ordinary offer: their answer
-        // is already on file, so the holding goes live at once. Always
-        // visible, because it is somebody waiting on you.
-        if (interactive && payloadState.holds_identity
-            && holder.status === 'requested' && !holder.is_self) {
+        // Inviting and withdrawing are the Identity holder's alone, and
+        // there is nowhere else for them to live. One small mark on the
+        // badge, revealed on hover the way Delete is, so the line stays a
+        // line of people rather than a row of controls.
+        const mine = interactive && payloadState.holds_identity;
+        if (mine && holder.status === 'requested' && !holder.is_self) {
           const confirm = document.createElement('button');
           confirm.type = 'button';
-          confirm.className = 'role-confirm';
-          confirm.textContent = 'Confirm';
-          confirm.onclick = async () => {
+          confirm.className = 'holder-action';
+          confirm.textContent = '✓';
+          confirm.title = `Confirm ${holder.name} in ${role.data.name}`;
+          confirm.onclick = async event => {
+            event.stopPropagation();
             try {
               await api('/api/agreement/roles/offer',
                 {role_uuid: role.uuid, actor_uuid: holder.actor_uuid});
@@ -964,19 +1107,15 @@
               showToast(`${holder.name} now holds ${role.data.name}`);
             } catch (error) { showToast(error.message, true); }
           };
-          row.append(confirm);
-        }
-
-        // Withdrawing an offer is destructive and rare, so it waits for a
-        // hover the way Delete does. Only where there is an offer to
-        // withdraw: a request and an already-withdrawn offer have none.
-        if (interactive && payloadState.holds_identity
-            && !['requested', 'revoked'].includes(holder.status)) {
+          badge.append(confirm);
+        } else if (mine && holder.status !== 'revoked') {
           const revoke = document.createElement('button');
           revoke.type = 'button';
-          revoke.className = 'role-revoke';
-          revoke.textContent = 'Revoke';
-          revoke.onclick = () => {
+          revoke.className = 'holder-action';
+          revoke.textContent = '×';
+          revoke.title = `Withdraw ${holder.name}'s offer of ${role.data.name}`;
+          revoke.onclick = event => {
+            event.stopPropagation();
             document.querySelector('#confirmModalConfirmBtn').textContent =
               'Revoke';
             confirmAction(
@@ -992,10 +1131,11 @@
               },
             );
           };
-          row.append(revoke);
+          badge.append(revoke);
         }
-        held.append(row);
+        badges.append(badge);
       }
+      if (holders.length) held.append(badges);
 
       // Inviting is the Identity holder's alone.
       if (interactive && payloadState.holds_identity) {
@@ -1143,6 +1283,13 @@
       article.classList.toggle('is-readonly', !currentInteractionAllowed);
       if (!current) { SovereignShell.refresh(); return; }
 
+      // The text collapses behind a caret on the title itself. Built before
+      // the title row so the caret has something to fold, and filled after.
+      const content = document.createElement('section');
+      content.className = 'content';
+      const contentOpen = ephemeral.contentCollapsed !== current.uuid;
+      content.classList.toggle('is-collapsed', !contentOpen);
+
       article.append(elementRow({
         node: current,
         tag: 'h2',
@@ -1157,6 +1304,13 @@
             await load();
           } catch (error) { showToast(error.message, true); }
         },
+        toggle: {
+          expanded: contentOpen,
+          onToggle: open => {
+            ephemeral.contentCollapsed = open ? '' : current.uuid;
+            content.classList.toggle('is-collapsed', !open);
+          },
+        },
         interactive: currentInteractionAllowed,
       }));
       if (!currentInteractionAllowed) {
@@ -1168,7 +1322,8 @@
         );
         article.append(notice);
       }
-      article.append(renderState(payload.state));
+      const stateLine = renderState(payload.state);
+      if (stateLine) article.append(stateLine);
       // Identity normally reads as a badge on whoever holds it, so the
       // line only appears when it needs attention: contested, recorded
       // twice, vacant, or held by somebody else and therefore takeable.
@@ -1178,27 +1333,6 @@
             && !(identityState.claims || []).length)) {
         article.append(renderIdentity(identityState, currentInteractionAllowed));
       }
-      // What the agreement says comes first; who is in it and what it
-      // expects of them follow. Collapsible, because once a document is
-      // settled the interesting part is the structure below it.
-      const content = document.createElement('section');
-      content.className = 'content';
-      const contentToggle = document.createElement('button');
-      contentToggle.type = 'button';
-      contentToggle.className = 'content-toggle';
-      const toggleLabel = open => (open ? '▾ ' : '▸ ') + 'Agreement text';
-      const contentOpen = ephemeral.contentCollapsed !== current.uuid;
-      contentToggle.textContent = toggleLabel(contentOpen);
-      contentToggle.onclick = () => {
-        const collapsed = !content.classList.contains('is-collapsed');
-        ephemeral.contentCollapsed = collapsed ? current.uuid : '';
-        content.classList.toggle('is-collapsed', collapsed);
-        contentToggle.textContent = toggleLabel(!collapsed);
-      };
-      content.classList.toggle('is-collapsed', !contentOpen);
-      content.append(contentToggle);
-
-
       const sections = displayedChildren(current, 'agreement_section');
       const sectionsHaveProposals = sections.some(entry => entry.proposed);
       sections.forEach(({node: section, proposed}, sIndex) => {
@@ -1278,6 +1412,9 @@
       });
       article.append(content);
       article.append(renderSeats(payload.parents, currentInteractionAllowed));
+      article.append(renderSeatOffers(
+        payload.seat_offers || [], currentInteractionAllowed,
+      ));
       article.append(renderParticipants(
         payload.participants, payload.identity, currentInteractionAllowed,
       ));

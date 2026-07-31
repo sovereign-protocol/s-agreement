@@ -83,8 +83,14 @@ class AgreementFacade:
     def seat_agreement(self, role_uuid: str, agreement_uuid: str):
         return self._logic.seat_agreement(role_uuid, agreement_uuid)
 
+    def decline_seat(self, role_uuid: str, agreement_uuid: str):
+        return self._logic.decline_seat(role_uuid, agreement_uuid)
+
     def unseat_agreement(self, role_uuid: str, agreement_uuid: str):
         return self._logic.unseat_agreement(role_uuid, agreement_uuid)
+
+    def seat_offers(self, agreement: ProtocolNode) -> list[dict]:
+        return self._logic.seat_offers(agreement)
 
     def create_seated_agreement(self, role_uuid: str, title: str):
         return self._logic.create_seated_agreement(role_uuid, title)

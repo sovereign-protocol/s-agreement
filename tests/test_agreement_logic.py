@@ -1722,6 +1722,204 @@ class AgreementLogicTests(unittest.TestCase):
         self.assertTrue(runtime.logic.owns_node(role_uuid))
         self.assertTrue(runtime.logic.owns_node(item_uuid))
 
+    # A seat is offered on the parent's page and answered on the child's,
+    # because those are two different people's pages.
+    def test_a_seat_offered_to_an_agreement_is_listed_on_it(self):
+        runtime = self.runtime(9500)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_agreement("Team A").value
+        role_uuid = runtime.logic.create_role(parent_uuid, "Operations").value
+        runtime.logic.set_role_purpose(role_uuid, "Run the day to day")
+        runtime.logic.offer_role(role_uuid, child_uuid)
+
+        child = runtime.session.protocol.index[child_uuid]
+        offers = runtime.logic.seat_offers(child)
+
+        self.assertEqual(len(offers), 1)
+        self.assertEqual(offers[0]["role_uuid"], role_uuid)
+        self.assertEqual(offers[0]["role_name"], "Operations")
+        self.assertEqual(offers[0]["role_purpose"], "Run the day to day")
+        self.assertEqual(offers[0]["agreement_uuid"], parent_uuid)
+        self.assertEqual(offers[0]["title"], "Cooperative")
+        self.assertEqual(offers[0]["answer"], "")
+        self.assertFalse(offers[0]["circular"])
+        # The parent's own page never lists it as an invitation to itself.
+        parent = runtime.session.protocol.index[parent_uuid]
+        self.assertEqual(runtime.logic.seat_offers(parent), [])
+
+        # Accepting it fills the seat and takes it off the list.
+        runtime.logic.seat_agreement(role_uuid, child_uuid)
+        child = runtime.session.protocol.index[child_uuid]
+        self.assertEqual(runtime.logic.seat_offers(child), [])
+        self.assertEqual(
+            [seat["role_uuid"] for seat in runtime.logic.parent_payload(child)],
+            [role_uuid],
+        )
+
+    def test_declining_a_seat_answers_it_and_can_be_reconsidered(self):
+        runtime = self.runtime(9501)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_agreement("Team A").value
+        role_uuid = runtime.logic.create_role(parent_uuid, "Operations").value
+        runtime.logic.offer_role(role_uuid, child_uuid)
+
+        self.assertEqual(
+            runtime.logic.decline_seat(role_uuid, child_uuid).status, "ok",
+        )
+        child = runtime.session.protocol.index[child_uuid]
+        offers = runtime.logic.seat_offers(child)
+
+        # Still listed, because turning it down is an answer that can change.
+        self.assertEqual(offers[0]["answer"], "refused")
+        self.assertEqual(runtime.logic.parent_holdings(child), [])
+        role = runtime.session.protocol.index[role_uuid]
+        self.assertFalse(runtime.logic._agreement_holds_role(role, child_uuid))
+
+        # Changing its mind rewrites the one answer rather than adding a
+        # second, or which of them counts would be down to iteration order.
+        runtime.logic.seat_agreement(role_uuid, child_uuid)
+        role = runtime.session.protocol.index[role_uuid]
+        decisions = [
+            node for node in role.live_children()
+            if node.data.get("type") == "agreement_role_decision"
+            and node.data.get("actor_uuid") == child_uuid
+        ]
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0].data["decision"], "accepted")
+        self.assertEqual(
+            decisions[0].data["decided_by"], runtime.session.identity.uuid,
+        )
+        child = runtime.session.protocol.index[child_uuid]
+        self.assertEqual(len(runtime.logic.parent_holdings(child)), 1)
+
+    def test_only_the_agreements_identity_holder_answers_for_it(self):
+        host = self.runtime(9502)
+        guest = self.runtime(9503)
+        parent_uuid = host.logic.create_agreement("Cooperative").value
+        child_uuid = host.logic.create_agreement("Team A").value
+        role_uuid = host.logic.create_role(parent_uuid, "Operations").value
+        host.logic.offer_role(role_uuid, child_uuid)
+        # Hand the child on, so this session speaks for it no longer.
+        host.logic.offer_identity(child_uuid, guest.session.identity.uuid)
+
+        for result in (
+            host.logic.seat_agreement(role_uuid, child_uuid),
+            host.logic.decline_seat(role_uuid, child_uuid),
+        ):
+            self.assertEqual(result.status, "error")
+            self.assertIn("Identity holder", result.reason)
+
+    def test_a_seat_that_would_close_a_loop_is_shown_and_refused(self):
+        runtime = self.runtime(9504)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_subagreement(
+            parent_uuid, "Team A",
+        ).value
+        # Now offer the parent a seat in its own child.
+        back_uuid = runtime.logic.create_role(child_uuid, "Sponsor").value
+        runtime.logic.offer_role(back_uuid, parent_uuid)
+
+        parent = runtime.session.protocol.index[parent_uuid]
+        offers = runtime.logic.seat_offers(parent)
+
+        # Shown, rather than hidden as if it had never come.
+        self.assertEqual(len(offers), 1)
+        self.assertTrue(offers[0]["circular"])
+        taken = runtime.logic.seat_agreement(back_uuid, parent_uuid)
+        self.assertEqual(taken.status, "error")
+        self.assertIn("circular", taken.reason)
+        # Turning it down does not walk the graph, so it still works.
+        self.assertEqual(
+            runtime.logic.decline_seat(back_uuid, parent_uuid).status, "ok",
+        )
+
+    def test_an_agreements_own_seat_reads_as_accepted_not_unobserved(self):
+        runtime = self.runtime(9507)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_agreement("Team A").value
+        role_uuid = runtime.logic.create_role(parent_uuid, "Operations").value
+        runtime.logic.offer_role(role_uuid, child_uuid)
+
+        parent = runtime.session.protocol.index[parent_uuid]
+        role = runtime.session.protocol.index[role_uuid]
+        # Offered and not yet answered, by somebody who could answer it.
+        seat = next(
+            holder for holder in runtime.logic.role_holders(parent, role)
+            if holder["actor_uuid"] == child_uuid
+        )
+        self.assertEqual(seat["status"], "pending")
+        self.assertEqual(seat["actor_kind"], "agreement")
+        self.assertEqual(seat["name"], "Team A")
+
+        runtime.logic.seat_agreement(role_uuid, child_uuid)
+        parent = runtime.session.protocol.index[parent_uuid]
+        role = runtime.session.protocol.index[role_uuid]
+        seat = next(
+            holder for holder in runtime.logic.role_holders(parent, role)
+            if holder["actor_uuid"] == child_uuid
+        )
+
+        # An agreement has no replica of its own, so its answer is vouched
+        # for by the replica of whoever gave it - this one. Reporting it as
+        # unobserved would call this session unable to see what it wrote.
+        self.assertEqual(seat["status"], "accepted")
+        self.assertTrue(seat["joined"])
+        # And it is a second actor here, which is what makes this working.
+        self.assertIn(child_uuid, runtime.logic.actor_uuids(parent))
+        self.assertEqual(runtime.logic.agreement_state(parent), "working")
+
+    def test_a_seat_answered_by_somebody_else_stays_unobserved(self):
+        host = self.runtime(9508)
+        guest = self.runtime(9509)
+        parent_uuid = host.logic.create_agreement("Cooperative").value
+        child_uuid = host.logic.create_agreement("Team A").value
+        role_uuid = host.logic.create_role(parent_uuid, "Operations").value
+        host.logic.offer_role(role_uuid, child_uuid)
+        # Somebody else speaks for the child now, and this session does not
+        # sync with them, so its answer is out of reach rather than absent.
+        host.logic.offer_identity(child_uuid, guest.session.identity.uuid)
+
+        parent = host.session.protocol.index[parent_uuid]
+        role = host.session.protocol.index[role_uuid]
+        seat = next(
+            holder for holder in host.logic.role_holders(parent, role)
+            if holder["actor_uuid"] == child_uuid
+        )
+
+        self.assertEqual(seat["status"], "unobserved")
+        self.assertNotIn(child_uuid, host.logic.actor_uuids(parent))
+
+    def test_seat_offers_reach_the_payload(self):
+        runtime = self.runtime(9505)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_agreement("Team A").value
+        role_uuid = runtime.logic.create_role(parent_uuid, "Operations").value
+        runtime.logic.offer_role(role_uuid, child_uuid)
+
+        payload = runtime.logic.document_payload(child_uuid)
+
+        self.assertEqual(
+            [offer["role_uuid"] for offer in payload["seat_offers"]],
+            [role_uuid],
+        )
+        self.assertEqual(
+            runtime.logic.document_payload(parent_uuid)["seat_offers"], [],
+        )
+
+    def test_a_revoked_seat_offer_stops_being_an_invitation(self):
+        runtime = self.runtime(9506)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_agreement("Team A").value
+        role_uuid = runtime.logic.create_role(parent_uuid, "Operations").value
+        runtime.logic.offer_role(role_uuid, child_uuid)
+        runtime.logic.revoke_role_offer(role_uuid, child_uuid)
+
+        child = runtime.session.protocol.index[child_uuid]
+
+        self.assertEqual(runtime.logic.seat_offers(child), [])
+        taken = runtime.logic.seat_agreement(role_uuid, child_uuid)
+        self.assertEqual(taken.status, "error")
+
     # Templates (2.8). A count of actors, so there is no flag to assert on -
     # only who is in it.
     def test_copy_carries_the_text_and_none_of_the_taking_part(self):

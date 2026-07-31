@@ -167,6 +167,12 @@ def build_routes(logic, runtime) -> list[Route]:
             data["role_uuid"], data.get("agreement_uuid", ""),
         ))
 
+    async def api_decline_seat(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.decline_seat(
+            data["role_uuid"], data.get("agreement_uuid", ""),
+        ))
+
     async def api_unseat_agreement(request: Request):
         data = await request.json()
         return await _json_result(runtime, logic.unseat_agreement(
@@ -294,6 +300,11 @@ def build_routes(logic, runtime) -> list[Route]:
         Route("/api/agreement/roles/move", api_move_role, methods=["POST"]),
         Route("/api/agreement/roles/offer", api_offer_role, methods=["POST"]),
         Route("/api/agreement/roles/seat", api_seat_agreement, methods=["POST"]),
+        Route(
+            "/api/agreement/roles/decline_seat",
+            api_decline_seat,
+            methods=["POST"],
+        ),
         Route(
             "/api/agreement/roles/unseat",
             api_unseat_agreement,

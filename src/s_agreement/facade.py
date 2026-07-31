@@ -55,6 +55,28 @@ class AgreementFacade:
     def domains(self, role: ProtocolNode) -> list[ProtocolNode]:
         return self._logic.domains(role)
 
+    def role_offers(self, role: ProtocolNode) -> list[ProtocolNode]:
+        return self._logic.role_offers(role)
+
+    def role_holders(
+        self, agreement: ProtocolNode, role: ProtocolNode,
+    ) -> list[dict]:
+        return self._logic.role_holders(agreement, role)
+
+    def offer_role(self, role_uuid: str, actor_uuid: str):
+        return self._logic.offer_role(role_uuid, actor_uuid)
+
+    def revoke_role_offer(self, role_uuid: str, actor_uuid: str):
+        return self._logic.revoke_role_offer(role_uuid, actor_uuid)
+
+    def decide_role(
+        self, role_uuid: str, decision: str, expires_at: str | None = None,
+    ):
+        return self._logic.decide_role(role_uuid, decision, expires_at)
+
+    def resign_role(self, role_uuid: str):
+        return self._logic.resign_role(role_uuid)
+
     def organization(self) -> dict:
         return self._logic.organization_payload()
 

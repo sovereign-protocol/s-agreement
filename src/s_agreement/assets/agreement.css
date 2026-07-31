@@ -476,6 +476,61 @@ h2.element-label { margin: 0 0 4px; }
 }
 .role-column .element-label { margin: 3px 0; font-size: 13px; }
 
+.role-holders { margin: 12px 0 0 22px; }
+.role-holders h5 {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.role-unheld { margin: 2px 0; font-size: 13px; color: var(--text-muted); }
+.role-holder {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 13px;
+}
+.role-holder-name { font-weight: 600; }
+.role-holder-status { color: var(--text-muted); font-size: 12px; }
+.role-holder[data-status="refused"] .role-holder-name {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.role-holder[data-status="expired"] .role-holder-status,
+.role-holder[data-status="outdated"] .role-holder-status { color: #f59e0b; }
+/* Not styled like "pending": this is "I cannot see", not "they have not
+   answered", and the two must not read as the same thing. */
+.role-holder[data-status="unobserved"] .role-holder-name,
+.role-holder[data-status="unobserved"] .role-holder-status {
+  font-style: italic;
+  opacity: 0.65;
+  cursor: help;
+}
+.role-revoke, .role-offer-picker { font-size: 12px; padding: 2px 6px; }
+.role-revoke { opacity: 0; }
+.role-holder:hover .role-revoke, .role-revoke:focus-visible { opacity: 1; }
+.role-offer-picker { margin-top: 6px; }
+
+/* The answer this participant owes is what the card exists for, so it is
+   the loudest thing on it. */
+.role-answer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  background: rgba(37, 99, 235, 0.14);
+  font-size: 13px;
+}
+.role-answer-prompt { flex: 1; min-width: 0; }
+.role-accept, .role-refuse { font-size: 13px; padding: 5px 12px; }
+.role-accept { border-color: var(--proposal); color: var(--proposal); font-weight: 600; }
+
 @media (max-width: 780px) {
   .role-columns { grid-template-columns: 1fr; }
   main { grid-template-columns: 1fr; padding: 12px; }

@@ -137,6 +137,32 @@ def build_routes(logic, runtime) -> list[Route]:
             data["role_uuid"], int(data.get("index", 0)),
         ))
 
+    async def api_offer_role(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.offer_role(
+            data["role_uuid"], data.get("actor_uuid", ""),
+        ))
+
+    async def api_revoke_role(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.revoke_role_offer(
+            data["role_uuid"], data.get("actor_uuid", ""),
+        ))
+
+    async def api_decide_role(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.decide_role(
+            data["role_uuid"],
+            data.get("decision", ""),
+            data.get("expires_at"),
+        ))
+
+    async def api_resign_role(request: Request):
+        data = await request.json()
+        return await _json_result(
+            runtime, logic.resign_role(data["role_uuid"]),
+        )
+
     async def api_create_role_item(request: Request):
         data = await request.json()
         return await _json_result(runtime, logic.create_role_item(
@@ -244,6 +270,10 @@ def build_routes(logic, runtime) -> list[Route]:
         ),
         Route("/api/agreement/roles/delete", api_delete_role, methods=["POST"]),
         Route("/api/agreement/roles/move", api_move_role, methods=["POST"]),
+        Route("/api/agreement/roles/offer", api_offer_role, methods=["POST"]),
+        Route("/api/agreement/roles/revoke", api_revoke_role, methods=["POST"]),
+        Route("/api/agreement/roles/decide", api_decide_role, methods=["POST"]),
+        Route("/api/agreement/roles/resign", api_resign_role, methods=["POST"]),
         Route(
             "/api/agreement/roles/items/create",
             api_create_role_item,

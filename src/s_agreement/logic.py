@@ -83,6 +83,7 @@ class AgreementLogic:
         )
         if result.status == "ok":
             identity = self._create_identity(result.value)
+            participant = self._create_default_participant(result.value)
             decision = self._record_decision(
                 result.value, "accepted", None,
             )
@@ -90,7 +91,10 @@ class AgreementLogic:
             return SessionResult(
                 "ok",
                 value=result.value.uuid,
-                effects=[*result.effects, *identity.effects, *decision.effects],
+                effects=[
+                    *result.effects, *identity.effects,
+                    *participant.effects, *decision.effects,
+                ],
             )
         return result
 
@@ -138,6 +142,7 @@ class AgreementLogic:
         # parent's new version. The child itself is a separately accepted
         # topic, recorded by its own decision item.
         child_identity = self._create_identity(child)
+        child_participant = self._create_default_participant(child)
         parent_decision = self._record_decision(
             self._node(parent.uuid, "agreement"), "accepted", None,
         )
@@ -150,6 +155,7 @@ class AgreementLogic:
                 *created.effects,
                 *linked.effects,
                 *child_identity.effects,
+                *child_participant.effects,
                 *parent_decision.effects,
                 *child_decision.effects,
             ],
@@ -429,6 +435,48 @@ class AgreementLogic:
         data["held_since"] = self._now()
         return self.session.modify(node.uuid, data, node.weights)
 
+    def _create_default_participant(
+        self, agreement: ProtocolNode,
+    ) -> SessionResult:
+        """Every agreement starts with one role, taken by its creator.
+
+        Without it a new agreement has nobody in it, and taking part would
+        mean first inventing the role to take. The name and purpose are
+        ordinary editable content - this is a starting point, not a fixture.
+        """
+        created = self.session.create_child(
+            agreement.uuid,
+            {
+                "type": "agreement_role",
+                "name": "Participant",
+                "purpose": "Take part in this agreement",
+                "order": 0.0,
+            },
+            {},
+        )
+        if created.status != "ok":
+            return created
+        role = created.value
+        offered = self.session.create_child(
+            role.uuid,
+            {
+                "type": "agreement_role_offer",
+                "actor_uuid": self.session.identity.uuid,
+                "actor_kind": "individual",
+                "offered_by": self.session.identity.uuid,
+                "offered_at": self._now(),
+            },
+            {},
+        )
+        decided = self._record_role_decision(
+            agreement, role, "accepted", None,
+        )
+        return SessionResult(
+            "ok",
+            value=role.uuid,
+            effects=[*created.effects, *offered.effects, *decided.effects],
+        )
+
     def _create_identity(
         self, agreement: ProtocolNode, actor_uuid: str | None = None,
     ) -> SessionResult:
@@ -673,6 +721,297 @@ class AgreementLogic:
             return allowed
         return self.session.move_child_to_index(item_uuid, index)
 
+    # Holding a role is two records with two authors. The Identity holder
+    # writes the offer; the actor writes their own decision. A holding is
+    # live only while both are present, which is what lets either side end
+    # it alone: revoking deletes the offer, resigning deletes the decision,
+    # and neither party can touch the other's node.
+    #
+    # They are siblings under the role rather than nested, because deleting
+    # a container prunes its descendants - nesting the decision under the
+    # offer would make revocation delete the actor's own record.
+    #
+    # An offer is per (role, actor), not per role: a role may be held by
+    # several actors, and revoking one must not revoke the rest.
+
+    def role_offers(self, role: ProtocolNode) -> list[ProtocolNode]:
+        return [
+            child for child in role.live_children()
+            if child.data.get("type") == "agreement_role_offer"
+        ]
+
+    def offer_role(self, role_uuid: str, actor_uuid: str) -> SessionResult:
+        role = self._node(role_uuid, "agreement_role")
+        if not role:
+            return SessionResult("error", reason="role not found")
+        agreement = self._local_agreement_topic(role.uuid)
+        allowed = self._interaction_guard(agreement)
+        if allowed.status != "ok":
+            return allowed
+        if not self.holds_identity(agreement):
+            return SessionResult(
+                "error", reason="only the Identity holder can offer a role",
+            )
+        normalized = str(actor_uuid or "").strip()
+        if not normalized:
+            return SessionResult("error", reason="an actor is required")
+        if self._offer_for(role, normalized):
+            return SessionResult(
+                "error", reason="that actor has already been offered this role",
+            )
+        return self.session.create_child(
+            role.uuid,
+            {
+                "type": "agreement_role_offer",
+                "actor_uuid": normalized,
+                "actor_kind": "individual",
+                "offered_by": self.session.identity.uuid,
+                "offered_at": self._now(),
+            },
+            {},
+        )
+
+    def revoke_role_offer(
+        self, role_uuid: str, actor_uuid: str,
+    ) -> SessionResult:
+        """Withdraw an offer. The actor's own decision is theirs and stays."""
+        role = self._node(role_uuid, "agreement_role")
+        if not role:
+            return SessionResult("error", reason="role not found")
+        agreement = self._local_agreement_topic(role.uuid)
+        allowed = self._interaction_guard(agreement)
+        if allowed.status != "ok":
+            return allowed
+        if not self.holds_identity(agreement):
+            return SessionResult(
+                "error", reason="only the Identity holder can revoke a role",
+            )
+        offer = self._offer_for(role, str(actor_uuid or "").strip())
+        if not offer:
+            return SessionResult("error", reason="offer not found")
+        return self.session.delete(offer.uuid)
+
+    def decide_role(
+        self, role_uuid: str, decision: str, expires_at: str | None = None,
+    ) -> SessionResult:
+        """Record this participant's own answer to a role they were offered."""
+        role = self._node(role_uuid, "agreement_role")
+        if not role:
+            return SessionResult("error", reason="role not found")
+        agreement = self._local_agreement_topic(role.uuid)
+        allowed = self._interaction_guard(agreement)
+        if allowed.status != "ok":
+            return allowed
+        mine = self.session.identity.uuid
+        if not self._offer_for(role, mine):
+            adopted = self._adopt_offer_proposal(agreement, role, mine)
+            if adopted.status != "ok":
+                return adopted
+            role = self._node(role_uuid, "agreement_role")
+            if not role or not self._offer_for(role, mine):
+                return SessionResult(
+                    "error", reason="this role has not been offered to you",
+                )
+        normalized_decision = str(decision or "").strip().lower()
+        if normalized_decision not in {"accepted", "refused"}:
+            return SessionResult(
+                "error", reason="decision must be accepted or refused",
+            )
+        normalized_expiry = self._normalize_expiry(expires_at)
+        if expires_at and normalized_expiry is None:
+            return SessionResult(
+                "error", reason="expiration must be an ISO date or timestamp",
+            )
+        return self._record_role_decision(
+            agreement, role, normalized_decision, normalized_expiry,
+        )
+
+    def resign_role(self, role_uuid: str) -> SessionResult:
+        """Step out of a role. Deleting only what this participant wrote."""
+        role = self._node(role_uuid, "agreement_role")
+        if not role:
+            return SessionResult("error", reason="role not found")
+        allowed = self._interaction_guard_for_node(role.uuid)
+        if allowed.status != "ok":
+            return allowed
+        decision = self._own_role_decision(role)
+        if not decision:
+            return SessionResult("error", reason="you do not hold this role")
+        return self.session.delete(decision.uuid)
+
+    def _record_role_decision(
+        self,
+        agreement: ProtocolNode,
+        role: ProtocolNode,
+        decision: str,
+        expires_at: str | None,
+    ) -> SessionResult:
+        data = {
+            "type": "agreement_role_decision",
+            "actor_uuid": self.session.identity.uuid,
+            "decision": decision,
+            "decided_at": self._now(),
+            "reference_hash": self.role_reference_hash(agreement, role),
+            "expires_at": expires_at,
+        }
+        existing = self._own_role_decision(role)
+        if existing:
+            return self.session.modify(existing.uuid, data, existing.weights)
+        return self.session.create_child(role.uuid, data, {})
+
+    def _adopt_offer_proposal(
+        self, agreement: ProtocolNode, role: ProtocolNode, actor_uuid: str,
+    ) -> SessionResult:
+        """Take up an offer that has only reached this session as a proposal.
+
+        This application never merges a peer's new node automatically - it
+        presents it for adoption - and an offer is no exception. Answering
+        one that has not been adopted yet therefore has to adopt it first.
+        Doing that here keeps it a single gesture for the person: they were
+        offered a role, and they answer. The authority check is not skipped,
+        because this goes through the same accept_peer_node as any other
+        adoption.
+        """
+        for address in self.session.peer_addresses(agreement.uuid):
+            peer_topic = self.session.get_cached_peer_subtree(
+                address, agreement.uuid,
+            )
+            peer_role = (
+                self._find_in_subtree(peer_topic, role.uuid)
+                if peer_topic else None
+            )
+            if not peer_role:
+                continue
+            found = next(
+                (
+                    child for child in peer_role.live_children()
+                    if (
+                        child.data.get("type") == "agreement_role_offer"
+                        and child.data.get("actor_uuid") == actor_uuid
+                    )
+                ),
+                None,
+            )
+            if found:
+                return self.accept_peer_node(address, found.uuid)
+        return SessionResult(
+            "error", reason="this role has not been offered to you",
+        )
+
+    def _offer_for(
+        self, role: ProtocolNode, actor_uuid: str,
+    ) -> ProtocolNode | None:
+        return next(
+            (
+                offer for offer in self.role_offers(role)
+                if offer.data.get("actor_uuid") == actor_uuid
+            ),
+            None,
+        )
+
+    def _own_role_decision(self, role: ProtocolNode) -> ProtocolNode | None:
+        return next(
+            (
+                child for child in role.live_children()
+                if (
+                    child.data.get("type") == "agreement_role_decision"
+                    and child.data.get("actor_uuid")
+                    == self.session.identity.uuid
+                )
+            ),
+            None,
+        )
+
+    def role_holders(
+        self, agreement: ProtocolNode, role: ProtocolNode,
+    ) -> list[dict]:
+        """Everyone offered this role, and where their answer stands.
+
+        A decision is credible only from the actor's own replica, so an
+        answer this session cannot reach is reported as unobserved rather
+        than guessed at or shown as pending. Those are different facts: one
+        is "they have not answered", the other is "I cannot see whether they
+        have".
+        """
+        people = {
+            member["uuid"]: member
+            for member in self._topic_members(agreement.uuid)
+        }
+        current = self.role_reference_hash(agreement, role)
+        holders = []
+        for offer in self.role_offers(role):
+            actor_uuid = str(offer.data.get("actor_uuid") or "").strip()
+            member = people.get(actor_uuid)
+            record = (
+                self._observed_role_decision(agreement, role, actor_uuid)
+                if member else None
+            )
+            if not member:
+                status = "unobserved"
+            elif not record:
+                status = "pending"
+            elif record.get("decision") == "refused":
+                status = "refused"
+            elif self._is_expired(record.get("expires_at")):
+                status = "expired"
+            elif record.get("reference_hash") != current:
+                status = "outdated"
+            else:
+                status = "accepted"
+            holders.append({
+                "actor_uuid": actor_uuid,
+                "name": (member or {}).get("name") or "Not on this topic",
+                "picture": (member or {}).get("picture") or "",
+                "is_self": actor_uuid == self.session.identity.uuid,
+                "status": status,
+                "decided_at": (record or {}).get("decided_at"),
+                "expires_at": (record or {}).get("expires_at"),
+                "offered_at": offer.data.get("offered_at"),
+                "offered_by": offer.data.get("offered_by"),
+            })
+        return sorted(holders, key=lambda item: item["name"])
+
+    def _observed_role_decision(
+        self, agreement: ProtocolNode, role: ProtocolNode, actor_uuid: str,
+    ) -> dict | None:
+        if actor_uuid == self.session.identity.uuid:
+            own = self._own_role_decision(role)
+            return dict(own.data) if own else None
+        for address in self.session.peer_addresses(agreement.uuid):
+            peer_topic = self.session.get_cached_peer_subtree(
+                address, agreement.uuid,
+            )
+            peer_role = (
+                self._find_in_subtree(peer_topic, role.uuid)
+                if peer_topic else None
+            )
+            if not peer_role:
+                continue
+            found = next(
+                (
+                    child for child in peer_role.live_children()
+                    if (
+                        child.data.get("type") == "agreement_role_decision"
+                        and child.data.get("actor_uuid") == actor_uuid
+                    )
+                ),
+                None,
+            )
+            if found:
+                return dict(found.data)
+        return None
+
+    @staticmethod
+    def _find_in_subtree(
+        root: ProtocolNode, node_uuid: str,
+    ) -> ProtocolNode | None:
+        if root.uuid == node_uuid:
+            return root
+        for child in root.children:
+            if found := AgreementLogic._find_in_subtree(child, node_uuid):
+                return found
+        return None
+
     def _role_item(self, item_uuid: str) -> ProtocolNode | None:
         # A stored node names its own kind, so only creation has to be told
         # which one it is.
@@ -713,7 +1052,7 @@ class AgreementLogic:
     REACTABLE = frozenset({
         "agreement", "agreement_section", "agreement_clause", "agreement_link",
         "agreement_role", "agreement_accountability", "agreement_domain",
-        "agreement_identity",
+        "agreement_identity", "agreement_role_offer", "agreement_role_decision",
     })
     OWNED_NODE_TYPES = frozenset({
         *REACTABLE, "agenda_item", "agreement_decision",
@@ -731,6 +1070,9 @@ class AgreementLogic:
         )
         if allowed.status != "ok":
             return allowed
+        authority = self._offer_authority_guard(source_addr, node_uuid)
+        if authority.status != "ok":
+            return authority
         return self.session.accept_peer_node(source_addr, node_uuid, adopt_absence)
 
     def rollback_peer_node(self, source_addr: str, node_uuid: str,
@@ -845,6 +1187,17 @@ class AgreementLogic:
                 self.identity_payload(selected) if selected
                 else {"state": "vacant"}
             ),
+            # Resolved here rather than in the view: a holder's status
+            # depends on peer replicas the browser never sees.
+            "role_holders": (
+                {
+                    role.uuid: self.role_holders(selected, role)
+                    for role in self.roles(selected)
+                } if selected else {}
+            ),
+            "holds_identity": (
+                self.holds_identity(selected) if selected else False
+            ),
             "interaction": (
                 self.interaction_payload(selected) if selected else {
                     "allowed": False, "reason": "",
@@ -870,6 +1223,7 @@ class AgreementLogic:
     # transition events come from the protocol tree, not from this view.
     NON_DOCUMENT_TYPES = frozenset({
         "agreement_decision", "agreement_identity",
+        "agreement_role_offer", "agreement_role_decision",
     })
 
     @classmethod
@@ -1163,6 +1517,24 @@ class AgreementLogic:
             })
         return badges
 
+    def role_reference_hash(
+        self, agreement: ProtocolNode, role: ProtocolNode,
+    ) -> str:
+        """What accepting this role commits you to.
+
+        The document body plus this role's own definition, and nothing else.
+        Hashing the whole agreement would mean editing the Treasurer's
+        accountabilities re-opens the Secretary's acceptance and every
+        subagreement's; scoping it this way keeps the churn proportional to
+        what actually changed for that person.
+        """
+        body = self.agreement_reference_hash(agreement)
+        definition = self._content_hash(role, {
+            "agreement_role", "agreement_accountability", "agreement_domain",
+        })
+        combined = f"{body}|{definition}".encode("utf-8")
+        return f"sha256:{hashlib.sha256(combined).hexdigest()}"
+
     def agreement_reference_hash(self, agreement: ProtocolNode) -> str:
         """Hash agreement content without participant decision records.
 
@@ -1173,11 +1545,13 @@ class AgreementLogic:
         and this hash exactly right for now; the scoping becomes visible when
         holdings arrive.
         """
-        included_types = {
+        return self._content_hash(agreement, {
             "agreement", "agreement_section", "agreement_clause",
             "agreement_link",
-        }
+        })
 
+    @staticmethod
+    def _content_hash(root: ProtocolNode, included_types: set[str]) -> str:
         def content(node: ProtocolNode) -> dict | None:
             if node.deleted or node.data.get("type") not in included_types:
                 return None
@@ -1195,7 +1569,7 @@ class AgreementLogic:
             }
 
         encoded = json.dumps(
-            content(agreement),
+            content(root),
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
@@ -1535,15 +1909,58 @@ class AgreementLogic:
     def _interaction_guard_for_reaction(
         self, peer_addr: str, node_uuid: str,
     ) -> SessionResult:
+        agreement = self._agreement_for_reaction(peer_addr, node_uuid)
+        if not agreement:
+            return SessionResult("error", reason="agreement not found")
+        return self._interaction_guard(agreement)
+
+    def _agreement_for_reaction(
+        self, peer_addr: str, node_uuid: str,
+    ) -> ProtocolNode | None:
         if local := self._local_agreement_topic(node_uuid):
-            return self._interaction_guard(local)
+            return local
         for topic_uuid in self.session.peer_topics_for_node(
             peer_addr, node_uuid,
         ):
-            agreement = self._node(topic_uuid, "agreement")
-            if agreement:
-                return self._interaction_guard(agreement)
-        return SessionResult("error", reason="agreement not found")
+            if agreement := self._node(topic_uuid, "agreement"):
+                return agreement
+        return None
+
+    def _offer_authority_guard(
+        self, peer_addr: str, node_uuid: str,
+    ) -> SessionResult:
+        """Only the Identity holder's role offers are adopted.
+
+        A coordination rule, not a security boundary. Nothing in the protocol
+        signs content, so this holds exactly as far as trusting the peers you
+        chose to sync with - recorded in DESIGN_ROLES_AND_ACTORS.md rather
+        than pretended away here. What it does guarantee is that every side
+        reaches the same verdict, because it reads only replicated state.
+        """
+        node = (
+            self.session.get_cached_peer_subtree(peer_addr, node_uuid)
+            or self.session.protocol.index.get(node_uuid)
+        )
+        if not node or node.data.get("type") != "agreement_role_offer":
+            return SessionResult("ok")
+        agreement = self._agreement_for_reaction(peer_addr, node_uuid)
+        if not agreement:
+            return SessionResult("ok")
+        identity = self.identity_payload(agreement)
+        if identity.get("state") != "held" or identity.get("claims"):
+            return SessionResult(
+                "error",
+                reason=(
+                    "Identity here is unsettled, so role offers cannot be "
+                    "adopted until it is resolved"
+                ),
+            )
+        if node.data.get("offered_by") != identity.get("holder_actor_uuid"):
+            return SessionResult(
+                "error",
+                reason="this role offer was not made by the Identity holder",
+            )
+        return SessionResult("ok")
 
     def _node(self, node_uuid: str | None,
               node_type: str) -> ProtocolNode | None:

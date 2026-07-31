@@ -626,6 +626,18 @@
       return line;
     };
 
+    // "Unobserved" is deliberately not worded as "pending": one means they
+    // have not answered, the other that this session cannot see whether they
+    // have. Collapsing them would be a lie the interface tells.
+    const HOLDER_STATUS = {
+      accepted: 'accepted',
+      pending: 'offered, not yet decided',
+      refused: 'refused',
+      expired: 'lapsed',
+      outdated: 'accepted an earlier version',
+      unobserved: 'answer not visible from here',
+    };
+
     // Accountabilities and domains differ only in what they are called, so
     // one card renders both columns from this table.
     const ROLE_ITEM_KINDS = [
@@ -735,6 +747,145 @@
         columns.append(column);
       }
       card.append(columns);
+
+      // Who holds this, and where each answer stands. "Nobody holds this
+      // yet" is a normal state, not an error - a defined role nobody has
+      // taken is just unclaimed work.
+      const holders = (payloadState.role_holders || {})[role.uuid] || [];
+      const held = document.createElement('div');
+      held.className = 'role-holders';
+      const heldTitle = document.createElement('h5');
+      heldTitle.textContent = 'Held by';
+      held.append(heldTitle);
+      if (!holders.length) {
+        const none = document.createElement('p');
+        none.className = 'role-unheld';
+        none.textContent = 'Nobody holds this yet';
+        held.append(none);
+      }
+      for (const holder of holders) {
+        const row = document.createElement('div');
+        row.className = 'role-holder';
+        row.dataset.status = holder.status;
+        const who = document.createElement('span');
+        who.className = 'role-holder-name';
+        who.textContent = holder.name;
+        const state = document.createElement('span');
+        state.className = 'role-holder-status';
+        state.textContent = HOLDER_STATUS[holder.status] || holder.status;
+        if (holder.status === 'unobserved') {
+          state.title =
+            'You do not sync with this person, so you cannot see their answer.';
+        } else if (holder.decided_at) {
+          state.title = new Date(holder.decided_at).toLocaleString();
+        }
+        row.append(who, state);
+        if (interactive && payloadState.holds_identity) {
+          const revoke = document.createElement('button');
+          revoke.type = 'button';
+          revoke.className = 'role-revoke';
+          revoke.textContent = 'Revoke';
+          revoke.onclick = () => {
+            document.querySelector('#confirmModalConfirmBtn').textContent =
+              'Revoke';
+            confirmAction(
+              `Revoke ${holder.name}'s offer of ${role.data.name}?`,
+              'This withdraws the offer. Their own record of the answer they '
+              + 'gave is theirs and stays, but the role is no longer held.',
+              async () => {
+                try {
+                  await api('/api/agreement/roles/revoke',
+                    {role_uuid: role.uuid, actor_uuid: holder.actor_uuid});
+                  await load();
+                } catch (error) { showToast(error.message, true); }
+              },
+            );
+          };
+          row.append(revoke);
+        }
+        held.append(row);
+      }
+
+      // The decision this participant owes, if any - the most prominent
+      // thing on the card, because it is what the card is for.
+      const mine = holders.find(holder => holder.is_self);
+      if (interactive && mine) {
+        const answer = document.createElement('div');
+        answer.className = 'role-answer';
+        if (mine.status === 'accepted') {
+          const resign = document.createElement('button');
+          resign.type = 'button';
+          resign.textContent = 'Step out of this role';
+          resign.onclick = async () => {
+            try {
+              await api('/api/agreement/roles/resign', {role_uuid: role.uuid});
+              await load();
+              showToast(`You stepped out of ${role.data.name}`);
+            } catch (error) { showToast(error.message, true); }
+          };
+          answer.append(resign);
+        } else {
+          const prompt = document.createElement('span');
+          prompt.className = 'role-answer-prompt';
+          prompt.textContent = mine.status === 'outdated'
+            ? 'This role changed since you accepted it.'
+            : `You have been offered ${role.data.name}.`;
+          const decide = (decision, label, className) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = className;
+            button.textContent = label;
+            button.onclick = async () => {
+              try {
+                await api('/api/agreement/roles/decide',
+                  {role_uuid: role.uuid, decision});
+                await load();
+              } catch (error) { showToast(error.message, true); }
+            };
+            return button;
+          };
+          answer.append(
+            prompt,
+            decide('accepted', 'Accept', 'role-accept'),
+            decide('refused', 'Refuse', 'role-refuse'),
+          );
+        }
+        held.append(answer);
+      }
+
+      if (interactive && payloadState.holds_identity) {
+        const offered = new Set(holders.map(holder => holder.actor_uuid));
+        const candidates = (payloadState.known_identities || [])
+          .filter(person => !offered.has(person.uuid));
+        if (candidates.length) {
+          const picker = document.createElement('select');
+          picker.className = 'role-offer-picker';
+          const blank = document.createElement('option');
+          blank.value = '';
+          blank.textContent = 'Offer to…';
+          picker.append(blank);
+          for (const person of candidates) {
+            const option = document.createElement('option');
+            option.value = person.uuid;
+            // A profile with no display name falls back to an address, which
+            // is a poor way to be told about yourself.
+            option.textContent = person.uuid === payloadState.identity_uuid
+              ? 'You'
+              : (person.name || person.address);
+            picker.append(option);
+          }
+          picker.onchange = async () => {
+            if (!picker.value) return;
+            try {
+              await api('/api/agreement/roles/offer',
+                {role_uuid: role.uuid, actor_uuid: picker.value});
+              await load();
+            } catch (error) { showToast(error.message, true); }
+          };
+          held.append(picker);
+        }
+      }
+      card.append(held);
       return card;
     };
 

@@ -100,11 +100,12 @@ class AgreementLogicTests(unittest.TestCase):
 
         self.assertEqual(APPLICATION_MANIFEST.application_id, "agreement")
         self.assertEqual(payload["agreement"]["uuid"], agreement_uuid)
-        self.assertEqual(payload["agreement"]["children"][0]["uuid"], section_uuid)
-        self.assertEqual(
-            payload["agreement"]["children"][0]["children"][0]["uuid"],
-            clause_uuid,
-        )
+        sections = [
+            child for child in payload["agreement"]["children"]
+            if child["data"].get("type") == "agreement_section"
+        ]
+        self.assertEqual(sections[0]["uuid"], section_uuid)
+        self.assertEqual(sections[0]["children"][0]["uuid"], clause_uuid)
 
     def test_acceptance_is_a_separate_hashed_timestamped_item(self):
         runtime = self.runtime(9458)
@@ -504,7 +505,10 @@ class AgreementLogicTests(unittest.TestCase):
         )
 
         payload = runtime.logic.document_payload()
-        section = payload["agreement"]["children"][0]
+        section = next(
+            child for child in payload["agreement"]["children"]
+            if child["data"].get("type") == "agreement_section"
+        )
         self.assertEqual(payload["agreement"]["data"]["title"], "Service terms")
         self.assertEqual(section["data"]["title"], "Scope")
         self.assertEqual(section["children"][0]["data"]["text"], "First draft.")
@@ -529,7 +533,11 @@ class AgreementLogicTests(unittest.TestCase):
 
         def section_titles():
             payload = runtime.logic.document_payload(agreement_uuid)
-            live = [s for s in payload["agreement"]["children"] if not s["deleted"]]
+            live = [
+                s for s in payload["agreement"]["children"]
+                if not s["deleted"]
+                and s["data"].get("type") == "agreement_section"
+            ]
             ordered = sorted(live, key=lambda s: s["data"].get("order", 0))
             return [s["data"]["title"] for s in ordered]
 
@@ -594,7 +602,11 @@ class AgreementLogicTests(unittest.TestCase):
 
         payload = runtime.logic.document_payload()
         sections = payload["agreement"]["children"]
-        live = [item for item in sections if not item["deleted"]]
+        live = [
+            item for item in sections
+            if not item["deleted"]
+            and item["data"].get("type") == "agreement_section"
+        ]
         self.assertEqual([item["uuid"] for item in live], [kept_uuid])
         # Deleting a container prunes its descendants out of the index rather
         # than tombstoning each one, so the clause is gone, not flagged.
@@ -610,7 +622,10 @@ class AgreementLogicTests(unittest.TestCase):
         self.assertEqual(runtime.logic.delete_clause(first_uuid).status, "ok")
 
         payload = runtime.logic.document_payload()
-        clauses = payload["agreement"]["children"][0]["children"]
+        clauses = next(
+            child for child in payload["agreement"]["children"]
+            if child["data"].get("type") == "agreement_section"
+        )["children"]
         live = [item["uuid"] for item in clauses if not item["deleted"]]
         self.assertEqual(live, [second_uuid])
 
@@ -804,6 +819,208 @@ class AgreementLogicTests(unittest.TestCase):
             ["Clause one.", "Clause two."],
         )
 
+    def test_a_new_agreement_starts_with_its_creator_participating(self):
+        runtime = self.runtime(9497)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        agreement = runtime.session.protocol.index[agreement_uuid]
+
+        role = runtime.logic.roles(agreement)[0]
+        self.assertEqual(role.data["name"], "Participant")
+        holders = runtime.logic.role_holders(agreement, role)
+        self.assertEqual(len(holders), 1)
+        self.assertTrue(holders[0]["is_self"])
+        self.assertEqual(holders[0]["status"], "accepted")
+        # One actor: an instantiated template. Nothing is useful yet, but
+        # taking part does not require inventing a role first.
+        self.assertEqual(
+            role.data["purpose"], "Take part in this agreement",
+        )
+
+    def test_revoking_removes_the_offer_and_leaves_their_own_record(self):
+        # The authorship rule: each side may withdraw what it wrote, and
+        # neither may delete what the other wrote. A holding is live only
+        # while both records are present, so either withdrawal ends it.
+        left, right = self.runtime(9498), self.runtime(9499)
+        agreement_uuid = left.logic.create_agreement("Charter").value
+        agreement = left.session.protocol.index[agreement_uuid]
+        role_uuid = left.logic.create_role(agreement_uuid, "Treasurer").value
+        connect(left, right, agreement_uuid)
+        right.logic.accept_agreement_invitation(
+            right.session.protocol.index[agreement_uuid],
+        )
+        sync(left, right)
+        left.logic.offer_role(role_uuid, right.session.identity.uuid)
+        sync(left, right)
+        self.assertEqual(
+            right.logic.decide_role(role_uuid, "accepted").status, "ok",
+        )
+        sync(left, right)
+
+        self.assertEqual(
+            left.logic.revoke_role_offer(
+                role_uuid, right.session.identity.uuid,
+            ).status,
+            "ok",
+        )
+        role = left.session.protocol.index[role_uuid]
+        self.assertEqual(left.logic.role_offers(role), [])
+        # Their decision is theirs. It survives, pointing at nothing, inert.
+        theirs = right.session.protocol.index[role_uuid]
+        self.assertTrue(right.logic._own_role_decision(theirs))
+        # And with the offer gone, nobody holds the role any more.
+        self.assertEqual(left.logic.role_holders(agreement, role), [])
+
+    def test_resigning_removes_only_the_participants_own_record(self):
+        runtime = self.runtime(9500)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        agreement = runtime.session.protocol.index[agreement_uuid]
+        role = runtime.logic.roles(agreement)[0]
+
+        self.assertEqual(runtime.logic.resign_role(role.uuid).status, "ok")
+        role = runtime.session.protocol.index[role.uuid]
+        self.assertIsNone(runtime.logic._own_role_decision(role))
+        # The offer was the agreement's to write, so resigning leaves it -
+        # the seat stays open rather than disappearing.
+        self.assertEqual(len(runtime.logic.role_offers(role)), 1)
+        self.assertEqual(
+            runtime.logic.role_holders(agreement, role)[0]["status"], "pending",
+        )
+
+    def test_only_the_identity_holder_offers_and_a_decision_needs_an_offer(self):
+        left, right = self.runtime(9501), self.runtime(9502)
+        agreement_uuid = left.logic.create_agreement("Charter").value
+        role_uuid = left.logic.create_role(agreement_uuid, "Treasurer").value
+        connect(left, right, agreement_uuid)
+        right.logic.accept_agreement_invitation(
+            right.session.protocol.index[agreement_uuid],
+        )
+        sync(left, right)
+
+        refused = right.logic.offer_role(role_uuid, right.session.identity.uuid)
+        self.assertEqual(refused.status, "error")
+        self.assertIn("only the Identity holder", refused.reason)
+        self.assertEqual(
+            right.logic.revoke_role_offer(
+                role_uuid, right.session.identity.uuid,
+            ).status,
+            "error",
+        )
+        # Nobody accepts a role they were never offered.
+        undecidable = right.logic.decide_role(role_uuid, "accepted")
+        self.assertEqual(undecidable.status, "error")
+        self.assertIn("not been offered", undecidable.reason)
+
+    def test_an_offer_from_someone_who_is_not_identity_is_not_adopted(self):
+        # The affordance keeps an honest client from making such an offer;
+        # this is the other half, for a client that ignores it.
+        left, right = self.runtime(9503), self.runtime(9504)
+        agreement_uuid = left.logic.create_agreement("Charter").value
+        role_uuid = left.logic.create_role(agreement_uuid, "Treasurer").value
+        connect(left, right, agreement_uuid)
+        right.logic.accept_agreement_invitation(
+            right.session.protocol.index[agreement_uuid],
+        )
+        sync(left, right)
+
+        forged = right.session.create_child(
+            role_uuid,
+            {
+                "type": "agreement_role_offer",
+                "actor_uuid": right.session.identity.uuid,
+                "actor_kind": "individual",
+                "offered_by": right.session.identity.uuid,
+                "offered_at": "2026-01-01T00:00:00Z",
+            },
+            {},
+        ).value
+        sync(left, right)
+
+        rejected = left.logic.accept_peer_node(right.peer_addr, forged.uuid)
+        self.assertEqual(rejected.status, "error")
+        self.assertIn("Identity holder", rejected.reason)
+
+    def test_an_answer_from_a_peer_you_do_not_sync_with_is_unobserved(self):
+        # "They have not answered" and "I cannot see whether they have" are
+        # different facts, and a decision is credible only from the actor's
+        # own replica. Reporting the second as pending would be a lie.
+        runtime = self.runtime(9505)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        agreement = runtime.session.protocol.index[agreement_uuid]
+        role_uuid = runtime.logic.create_role(agreement_uuid, "Treasurer").value
+
+        runtime.logic.offer_role(role_uuid, "an-actor-we-never-meet")
+        role = runtime.session.protocol.index[role_uuid]
+        holders = runtime.logic.role_holders(agreement, role)
+
+        self.assertEqual(len(holders), 1)
+        self.assertEqual(holders[0]["status"], "unobserved")
+        self.assertIsNone(holders[0]["decided_at"])
+
+    def test_a_role_acceptance_covers_the_document_and_that_role_only(self):
+        runtime = self.runtime(9506)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        treasurer_uuid = runtime.logic.create_role(
+            agreement_uuid, "Treasurer",
+        ).value
+        secretary_uuid = runtime.logic.create_role(
+            agreement_uuid, "Secretary",
+        ).value
+        mine = runtime.session.identity.uuid
+        runtime.logic.offer_role(treasurer_uuid, mine)
+        runtime.logic.decide_role(treasurer_uuid, "accepted")
+
+        def status():
+            agreement = runtime.session.protocol.index[agreement_uuid]
+            role = runtime.session.protocol.index[treasurer_uuid]
+            return runtime.logic.role_holders(agreement, role)[0]["status"]
+
+        self.assertEqual(status(), "accepted")
+        # Somebody else's role is not this participant's business.
+        runtime.logic.create_role_item(
+            secretary_uuid, "accountability", "Take minutes",
+        )
+        runtime.logic.rename_role(secretary_uuid, "Clerk")
+        self.assertEqual(status(), "accepted")
+        # Their own role is.
+        runtime.logic.create_role_item(
+            treasurer_uuid, "accountability", "Monthly reconciliation",
+        )
+        self.assertEqual(status(), "outdated")
+        runtime.logic.decide_role(treasurer_uuid, "accepted")
+        self.assertEqual(status(), "accepted")
+        # So is the document everybody is agreeing to.
+        runtime.logic.create_section(agreement_uuid, "Terms")
+        self.assertEqual(status(), "outdated")
+
+    def test_a_holder_is_only_accepted_once_seen_from_their_own_replica(self):
+        left, right = self.runtime(9507), self.runtime(9508)
+        agreement_uuid = left.logic.create_agreement("Charter").value
+        agreement = left.session.protocol.index[agreement_uuid]
+        role_uuid = left.logic.create_role(agreement_uuid, "Treasurer").value
+        connect(left, right, agreement_uuid)
+        right.logic.accept_agreement_invitation(
+            right.session.protocol.index[agreement_uuid],
+        )
+        sync(left, right)
+        left.logic.offer_role(role_uuid, right.session.identity.uuid)
+        sync(left, right)
+
+        def status_from_left():
+            role = left.session.protocol.index[role_uuid]
+            return next(
+                holder["status"]
+                for holder in left.logic.role_holders(agreement, role)
+                if not holder["is_self"]
+            )
+
+        self.assertEqual(status_from_left(), "pending")
+        right.logic.decide_role(role_uuid, "accepted")
+        sync(left, right)
+        self.assertEqual(status_from_left(), "accepted")
+        right.logic.decide_role(role_uuid, "refused")
+        sync(left, right)
+        self.assertEqual(status_from_left(), "refused")
+
     def test_the_creator_holds_identity_of_what_they_create(self):
         runtime = self.runtime(9488)
         agreement_uuid = runtime.logic.create_agreement("Charter").value
@@ -991,20 +1208,26 @@ class AgreementLogicTests(unittest.TestCase):
         self.assertEqual(accountability.status, "ok")
         self.assertEqual(domain.status, "ok")
         agreement = runtime.session.protocol.index[agreement_uuid]
+        # Every agreement starts with a Participant role, so this one is
+        # the second.
         roles = runtime.logic.roles(agreement)
-        self.assertEqual([node.data["name"] for node in roles], ["Treasurer"])
         self.assertEqual(
-            roles[0].data["purpose"], "Keep the books honest and current",
+            [node.data["name"] for node in roles],
+            ["Participant", "Treasurer"],
+        )
+        treasurer = roles[1]
+        self.assertEqual(
+            treasurer.data["purpose"], "Keep the books honest and current",
         )
         # Separate nodes, not a list inside the role: two people editing
         # different accountabilities have to be able to diverge separately.
         self.assertEqual(
             [node.data["text"] for node in
-             runtime.logic.accountabilities(roles[0])],
+             runtime.logic.accountabilities(treasurer)],
             ["Monthly reconciliation"],
         )
         self.assertEqual(
-            [node.data["text"] for node in runtime.logic.domains(roles[0])],
+            [node.data["text"] for node in runtime.logic.domains(treasurer)],
             ["Bank accounts"],
         )
 
@@ -1031,9 +1254,13 @@ class AgreementLogicTests(unittest.TestCase):
             role = runtime.session.protocol.index[first]
             return [node.data["text"] for node in reader(role)]
 
-        self.assertEqual(names(), ["First", "Second", "Third"])
+        self.assertEqual(
+            names(), ["Participant", "First", "Second", "Third"],
+        )
         self.assertEqual(runtime.logic.move_role(second, 0).status, "ok")
-        self.assertEqual(names(), ["Second", "First", "Third"])
+        self.assertEqual(
+            names(), ["Second", "Participant", "First", "Third"],
+        )
 
         self.assertEqual(texts(runtime.logic.accountabilities), ["Alpha", "Beta"])
         self.assertEqual(runtime.logic.move_role_item(alpha, 1).status, "ok")
@@ -1056,7 +1283,10 @@ class AgreementLogicTests(unittest.TestCase):
         # than tombstoning each one, as it does for a section's clauses.
         self.assertNotIn(item_uuid, runtime.session.protocol.index)
         agreement = runtime.session.protocol.index[agreement_uuid]
-        self.assertEqual(runtime.logic.roles(agreement), [])
+        self.assertEqual(
+            [node.data["name"] for node in runtime.logic.roles(agreement)],
+            ["Participant"],
+        )
 
     def test_a_purpose_may_be_cleared_but_a_name_may_not(self):
         runtime = self.runtime(9483)

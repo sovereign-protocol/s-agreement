@@ -37,8 +37,8 @@ agreement                          (topic, unchanged)
 ├── agreement_role                 data.name, data.purpose, data.order
 │   ├── agreement_accountability   data.text, data.order
 │   ├── agreement_domain           data.text, data.order
-│   └── agreement_role_offer       one per (role, actor); authored by Identity
-│       └── agreement_role_decision  one per offer; self-reported by the actor
+│   ├── agreement_role_offer       one per (role, actor); authored by Identity
+│   └── agreement_role_decision    one per (role, actor); by the actor
 └── agreement_role_holding         local mirror: "I hold role R in agreement P"
                                    data.order — the ordered parent list
 ```
@@ -149,6 +149,20 @@ the other's consent and neither can rewrite the other's record. Mechanically
 free: deletions propagate as absences, and `adopt_absence` /
 `rollback_absence` are already parameters of `accept_peer_node` /
 `rollback_peer_node`.
+
+**[DONE]** This is why offer and decision are **siblings under the role, not
+nested**. Deleting a container prunes its descendants rather than tombstoning
+them — measured in step 1 on a role's accountabilities — so nesting the
+decision inside the offer would make revocation delete the actor's own
+record, which is precisely what this rule forbids. Both are keyed on
+`actor_uuid` under the role instead, leaving each author's node independent.
+
+**[DONE]** Answering an offer adopts it first. This application never merges
+a peer's new node automatically — it presents it as a proposal — so an offer
+reaches the person it names as a proposal, not as state. `decide_role`
+therefore adopts the offer before recording the answer, keeping it one
+gesture for the person while still passing through `accept_peer_node`, so the
+authority check in §2.1 is not bypassed.
 
 The leftover is harmless. After revocation the actor's decision node survives
 pointing at nothing, and is inert. No cleanup pass.
@@ -511,3 +525,19 @@ cannot live outside the DOM.
 - **[OPEN]** Role as a third Actor kind (a role holding a seat in a
   sub-agreement, so the seat survives personnel change). Deliberately deferred
   — `actor_ref` is a discriminated union so this stays additive.
+- **[OPEN] How does a newly invited person get their first role?** Offers
+  come only from Identity (§2.1), so somebody who accepts a topic invitation
+  holds nothing and can do nothing until the Identity holder offers them
+  Participant. That is faithful to "taking a role is the only way to be part
+  of an agreement", but it means joining now has a second step performed by
+  somebody else, and nothing prompts the Identity holder to take it.
+  Candidates: the inviter offers Participant at invitation time (invitations
+  are Core's, so the application would have to hook composition); a role may
+  be marked open, so any topic peer may accept it without an individual offer
+  (cheap, but weakens "explicitly offered"); or a joiner may request a role
+  and Identity confirms (an extra round trip, but symmetric with everything
+  else here). **This blocks retiring `agreement_decision`**, because the
+  agreement-level acceptance is currently what a newcomer can act on.
+  Until it is settled, role holdings run *alongside* `agreement_decision`
+  rather than replacing it, and `_interaction_guard` still reads the old
+  record.

@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from sovereign import ApplicationRegistration, ProtocolNode, Session, SessionResult
@@ -28,9 +29,43 @@ class AgreementLogic:
         self.session = session
         self.config = config or {}
         self.collaboration = collaboration
+        # Reading Session.identity snapshots the whole protocol tree, and
+        # building one payload asked for it hundreds of times - once per
+        # role, per holder, per member list - which cost over a second per
+        # build. Reads memoise inside a scope; nothing outside one does, so
+        # a mutation can never see a stale entry.
+        self._memo: dict | None = None
         self.session.identity
         with self.session.lock:
             self.session.application_metadata(AGREEMENT_APPLICATION_ID)
+
+    @contextmanager
+    def _reading(self):
+        """Memoise repeated lookups for the length of one read.
+
+        Only reads open a scope, and a read performs no mutation, so nothing
+        cached here can go stale while it is in use. Nested scopes share the
+        outermost one, since a payload builds the organization inside itself.
+        """
+        outer = self._memo
+        if outer is None:
+            self._memo = {}
+        try:
+            yield
+        finally:
+            if outer is None:
+                self._memo = None
+
+    def _cached(self, key, build):
+        if self._memo is None:
+            return build()
+        if key not in self._memo:
+            self._memo[key] = build()
+        return self._memo[key]
+
+    @property
+    def _identity_uuid(self) -> str:
+        return self._cached(("identity",), lambda: self.session.identity.uuid)
 
     def application_registration(self) -> ApplicationRegistration:
         return ApplicationRegistration(
@@ -449,7 +484,7 @@ class AgreementLogic:
     def holds_identity(self, agreement: ProtocolNode) -> bool:
         return bool(
             (holder := self.identity_holder(agreement))
-            and holder == self.session.identity.uuid
+            and holder == self._identity_uuid
         )
 
     def take_identity(self, agreement_uuid: str) -> SessionResult:
@@ -462,7 +497,7 @@ class AgreementLogic:
         same node, which surfaces as a divergence for both sides to settle.
         The warning belongs in the interface, not in a refusal here.
         """
-        return self._write_identity(agreement_uuid, self.session.identity.uuid)
+        return self._write_identity(agreement_uuid, self._identity_uuid)
 
     def offer_identity(
         self, agreement_uuid: str, actor_uuid: str,
@@ -478,7 +513,7 @@ class AgreementLogic:
         normalized = str(actor_uuid or "").strip()
         if not normalized:
             return SessionResult("error", reason="an actor is required")
-        if normalized == self.session.identity.uuid:
+        if normalized == self._identity_uuid:
             return SessionResult("error", reason="Identity is already yours")
         return self._write_identity(agreement_uuid, normalized)
 
@@ -539,9 +574,9 @@ class AgreementLogic:
             role.uuid,
             {
                 "type": "agreement_role_offer",
-                "actor_uuid": self.session.identity.uuid,
+                "actor_uuid": self._identity_uuid,
                 "actor_kind": "individual",
-                "offered_by": self.session.identity.uuid,
+                "offered_by": self._identity_uuid,
                 "offered_at": self._now(),
             },
             {},
@@ -562,7 +597,7 @@ class AgreementLogic:
             agreement.uuid,
             {
                 "type": "agreement_identity",
-                "holder_actor_uuid": actor_uuid or self.session.identity.uuid,
+                "holder_actor_uuid": actor_uuid or self._identity_uuid,
                 "held_since": self._now(),
             },
             {},
@@ -648,7 +683,7 @@ class AgreementLogic:
             "state": "held",
             "holder_actor_uuid": holder,
             "holder_name": describe(holder),
-            "is_self": holder == self.session.identity.uuid,
+            "is_self": holder == self._identity_uuid,
             "held_since": node.data.get("held_since"),
             "claims": claims,
         }
@@ -853,7 +888,7 @@ class AgreementLogic:
                 "agreement"
                 if self._node(normalized, "agreement") else "individual"
             ),
-            "offered_by": self.session.identity.uuid,
+            "offered_by": self._identity_uuid,
             "offered_at": self._now(),
             "revoked_at": None,
         }
@@ -893,7 +928,7 @@ class AgreementLogic:
             return SessionResult("error", reason="offer not found")
         data = dict(offer.data)
         data["revoked_at"] = self._now()
-        data["revoked_by"] = self.session.identity.uuid
+        data["revoked_by"] = self._identity_uuid
         return self.session.modify(offer.uuid, data, offer.weights)
 
     def decide_role(
@@ -917,7 +952,7 @@ class AgreementLogic:
         allowed = self._interaction_guard(agreement)
         if allowed.status != "ok":
             return allowed
-        mine = self.session.identity.uuid
+        mine = self._identity_uuid
         if not self._offer_for(role, mine):
             # There may be an offer that has only reached this session as a
             # proposal. If there is, answering it should take it up; if there
@@ -983,7 +1018,7 @@ class AgreementLogic:
             {
                 "type": "agreement_role_decision",
                 "actor_uuid": seated.uuid,
-                "decided_by": self.session.identity.uuid,
+                "decided_by": self._identity_uuid,
                 "decision": "accepted",
                 "decided_at": self._now(),
                 "reference_hash": self.role_reference_hash(parent, role),
@@ -1126,7 +1161,7 @@ class AgreementLogic:
     ) -> SessionResult:
         data = {
             "type": "agreement_role_decision",
-            "actor_uuid": self.session.identity.uuid,
+            "actor_uuid": self._identity_uuid,
             "decision": decision,
             "decided_at": self._now(),
             "reference_hash": self.role_reference_hash(agreement, role),
@@ -1157,7 +1192,7 @@ class AgreementLogic:
             role = self._node(role_uuid, "agreement_role")
             if not agreement or not role:
                 continue
-            if not self._offer_for(role, self.session.identity.uuid):
+            if not self._offer_for(role, self._identity_uuid):
                 continue
             own = self._own_role_decision(role)
             if not own or own.data.get("decision") != "accepted":
@@ -1229,7 +1264,7 @@ class AgreementLogic:
                 if (
                     child.data.get("type") == "agreement_role_decision"
                     and child.data.get("actor_uuid")
-                    == self.session.identity.uuid
+                    == self._identity_uuid
                 )
             ),
             None,
@@ -1261,6 +1296,11 @@ class AgreementLogic:
             offer = offers.get(actor_uuid)
             record = decisions.get(actor_uuid)
             member = people.get(actor_uuid)
+            # Somebody this session knows but who is not on this topic is
+            # a different case from somebody it cannot place at all: the
+            # first has simply not been invited here, which is actionable
+            # and is not the same as being unable to see their answer.
+            known = None if member else self._known_people().get(actor_uuid)
             revoked = bool(offer and offer.data.get("revoked_at"))
             if revoked and not record:
                 # Withdrawn, and nobody left holding an answer to it. The
@@ -1273,7 +1313,7 @@ class AgreementLogic:
                 # An answer nobody offered: somebody asking to take this.
                 status = "requested"
             elif not member:
-                status = "unobserved"
+                status = "uninvited" if known else "unobserved"
             elif not record:
                 status = "pending"
             elif record.get("decision") == "refused":
@@ -1300,13 +1340,18 @@ class AgreementLogic:
                 # watching a request that looks unanswered forever.
                 "confirmed_elsewhere": (
                     status == "requested"
-                    and actor_uuid == self.session.identity.uuid
+                    and actor_uuid == self._identity_uuid
                     and self._offer_proposed_to_me(agreement, role)
                 ),
                 "name": (
                     (seated.data.get("title") or "Untitled agreement")
                     if seated
-                    else (member or {}).get("name") or "Not on this topic"
+                    # A profile with no display name still has an
+                    # address, which names somebody better than a
+                    # placeholder saying they are a stranger.
+                    else (member or known or {}).get("name")
+                    or (member or known or {}).get("address")
+                    or "Somebody you have not met"
                 ),
                 "joined": bool(seated) if (
                     offer and offer.data.get("actor_kind") == "agreement"
@@ -1319,7 +1364,7 @@ class AgreementLogic:
                     or "individual"
                 ),
                 "picture": (member or {}).get("picture") or "",
-                "is_self": actor_uuid == self.session.identity.uuid,
+                "is_self": actor_uuid == self._identity_uuid,
                 "status": status,
                 "decided_at": (record or {}).get("decided_at"),
                 "expires_at": (record or {}).get("expires_at"),
@@ -1332,7 +1377,7 @@ class AgreementLogic:
         self, agreement: ProtocolNode, role: ProtocolNode,
     ) -> bool:
         """Whether some peer holds an offer of this role to this session."""
-        mine = self.session.identity.uuid
+        mine = self._identity_uuid
         for address in self.session.peer_addresses(agreement.uuid):
             peer_topic = self.session.get_cached_peer_subtree(
                 address, agreement.uuid,
@@ -1363,7 +1408,7 @@ class AgreementLogic:
         found: dict[str, dict] = {}
         own = self._own_role_decision(role)
         if own:
-            found[self.session.identity.uuid] = dict(own.data)
+            found[self._identity_uuid] = dict(own.data)
         members = {
             address: member
             for member in self._topic_members(agreement.uuid)
@@ -1528,6 +1573,13 @@ class AgreementLogic:
         self, agreement_uuid: str | None = None,
         network: dict | None = None,
     ) -> dict:
+        with self._reading():
+            return self._build_document_payload(agreement_uuid, network)
+
+    def _build_document_payload(
+        self, agreement_uuid: str | None = None,
+        network: dict | None = None,
+    ) -> dict:
         agreements = self.agreements()
         selected = self._selected_agreement(agreement_uuid, agreements)
         network = (
@@ -1559,7 +1611,7 @@ class AgreementLogic:
                 node.to_dict() for node in
                 (self.session.agenda_items(selected.uuid) if selected else [])
             ],
-            "identity_uuid": self.session.identity.uuid,
+            "identity_uuid": self._identity_uuid,
             "known_identities": self.session.known_identities(),
             "organization": self.organization_payload(),
             "participants": (
@@ -1759,7 +1811,7 @@ class AgreementLogic:
             ],
             "transition_events": events,
             "transition_by_node": self.transition_by_node(events),
-            "identity_uuid": self.session.identity.uuid,
+            "identity_uuid": self._identity_uuid,
             "known_identities": self.session.known_identities(),
         }
 
@@ -1805,6 +1857,10 @@ class AgreementLogic:
         return descendants
 
     def participants(self, agreement_uuid: str) -> list[dict]:
+        with self._reading():
+            return self._build_participants(agreement_uuid)
+
+    def _build_participants(self, agreement_uuid: str) -> list[dict]:
         """Everyone on this topic, and what each of them holds.
 
         Two populations that used to be one. *Peers* are who this session
@@ -1864,7 +1920,18 @@ class AgreementLogic:
         subagreement's; scoping it this way keeps the churn proportional to
         what actually changed for that person.
         """
-        body = self.agreement_reference_hash(agreement)
+        return self._cached(
+            ("role_hash", agreement.uuid, role.uuid),
+            lambda: self._build_role_reference_hash(agreement, role),
+        )
+
+    def _build_role_reference_hash(
+        self, agreement: ProtocolNode, role: ProtocolNode,
+    ) -> str:
+        body = self._cached(
+            ("body_hash", agreement.uuid),
+            lambda: self.agreement_reference_hash(agreement),
+        )
         definition = self._content_hash(role, {
             "agreement_role", "agreement_accountability", "agreement_domain",
         })
@@ -2052,7 +2119,7 @@ class AgreementLogic:
         # it before they may act, which is nonsense.
         if self.holds_identity(agreement):
             return True
-        mine = self.session.identity.uuid
+        mine = self._identity_uuid
         for role in self.roles(agreement):
             if not self._offer_for(role, mine):
                 continue
@@ -2067,7 +2134,24 @@ class AgreementLogic:
                 return True
         return False
 
+    def _known_people(self) -> dict[str, dict]:
+        """Everyone this session can put a name to, on this topic or not."""
+        return self._cached(
+            ("known",),
+            lambda: {
+                person["uuid"]: person
+                for person in self.session.known_identities()
+                if person.get("uuid")
+            },
+        )
+
     def _topic_members(self, agreement_uuid: str) -> list[dict]:
+        return self._cached(
+            ("members", agreement_uuid),
+            lambda: self._build_topic_members(agreement_uuid),
+        )
+
+    def _build_topic_members(self, agreement_uuid: str) -> list[dict]:
         identities = self.session.known_identities()
         by_address = {
             address: identity
@@ -2080,19 +2164,19 @@ class AgreementLogic:
         self_identity = next(
             (
                 item for item in identities
-                if item.get("uuid") == self.session.identity.uuid
+                if item.get("uuid") == self._identity_uuid
             ),
             {},
         )
         people = [{
-            "uuid": self.session.identity.uuid,
+            "uuid": self._identity_uuid,
             "name": self_identity.get("name") or "You",
             "picture": self_identity.get("picture") or "",
             "address": self.session.address,
             "addresses": [self.session.address],
             "is_self": True,
         }]
-        seen = {self.session.identity.uuid}
+        seen = {self._identity_uuid}
         for address in self.session.peer_addresses(agreement_uuid):
             identity = by_address.get(address) or {}
             identity_uuid = identity.get("uuid") or f"address:{address}"
@@ -2137,6 +2221,10 @@ class AgreementLogic:
         return parsed <= datetime.now(timezone.utc)
 
     def organization_payload(self) -> dict:
+        with self._reading():
+            return self._build_organization_payload()
+
+    def _build_organization_payload(self) -> dict:
         """Return the locally consented agreement hierarchy.
 
         The holding graph is a DAG - an agreement may hold seats in several
@@ -2313,7 +2401,21 @@ class AgreementLogic:
 
     def _node(self, node_uuid: str | None,
               node_type: str) -> ProtocolNode | None:
-        node = self.session.protocol.index.get(node_uuid) if node_uuid else None
+        # Every lookup snapshots a subtree out of Session, and one payload
+        # asks for the same agreements and roles dozens of times over. Cached
+        # for the length of a read only, so a mutation always looks again -
+        # which matters, because modifying a node replaces the object rather
+        # than mutating it.
+        if not node_uuid:
+            return None
+        return self._cached(
+            ("node", node_uuid, node_type),
+            lambda: self._lookup_node(node_uuid, node_type),
+        )
+
+    def _lookup_node(self, node_uuid: str,
+                     node_type: str) -> ProtocolNode | None:
+        node = self.session.protocol.index.get(node_uuid)
         return (
             node
             if (

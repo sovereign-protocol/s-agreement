@@ -529,3 +529,17 @@ h2.element-label { margin: 0 0 4px; }
   color: var(--text-muted);
   font-size: 11px;
 }
+
+/* The agreement text collapses, because once it is settled the interesting
+   part is the structure below it. */
+.content-toggle {
+  border: none;
+  padding: 2px 4px;
+  margin-left: 18px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.content.is-collapsed > *:not(.content-toggle) { display: none; }

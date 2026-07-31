@@ -1316,6 +1316,62 @@ class AgreementLogicTests(unittest.TestCase):
         refused = right.logic.seat_agreement(seat, circle)
         self.assertEqual(refused.status, "error")
 
+    def test_somebody_known_but_not_on_this_topic_keeps_their_name(self):
+        # "Not invited to this agreement yet" and "I cannot see their answer"
+        # are different facts, and only the first one can be acted on. The
+        # earlier wording reported both as unobserved and threw the name
+        # away, which made a real person look like a stranger.
+        left, right = self.runtime(9521), self.runtime(9522)
+        shared = left.logic.create_agreement("Shared").value
+        connect(left, right, shared)
+        sync(left, right)
+
+        # A second agreement right was never invited to.
+        other = left.logic.create_agreement("Private").value
+        role_uuid = left.logic.create_role(other, "Treasurer").value
+        left.logic.offer_role(role_uuid, right.session.identity.uuid)
+
+        agreement = left.session.protocol.index[other]
+        role = left.session.protocol.index[role_uuid]
+        holder = next(
+            item for item in left.logic.role_holders(agreement, role)
+            if not item["is_self"]
+        )
+        self.assertEqual(holder["status"], "uninvited")
+        self.assertNotEqual(holder["name"], "Somebody you have not met")
+        # And an actor nobody can place at all is still unobserved.
+        left.logic.offer_role(role_uuid, "nobody-we-have-ever-met")
+        role = left.session.protocol.index[role_uuid]
+        stranger = next(
+            item for item in left.logic.role_holders(agreement, role)
+            if item["actor_uuid"] == "nobody-we-have-ever-met"
+        )
+        self.assertEqual(stranger["status"], "unobserved")
+
+    def test_a_read_never_serves_what_an_edit_has_already_changed(self):
+        # Building one payload asks Session for the same identity, members and
+        # hashes hundreds of times, so reads memoise. The scope is the read:
+        # nothing outside one caches, or an edit would be invisible until
+        # something else happened to clear it.
+        runtime = self.runtime(9523)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+
+        def own_roles():
+            payload = runtime.logic.document_payload(agreement_uuid)
+            me = next(
+                person for person in payload["participants"]
+                if person["is_self"]
+            )
+            return {role["name"]: role["status"] for role in me["roles"]}
+
+        self.assertEqual(own_roles()["Participant"], "accepted")
+        runtime.logic.create_section(agreement_uuid, "Purpose")
+        self.assertEqual(own_roles()["Participant"], "outdated")
+        agreement = runtime.session.protocol.index[agreement_uuid]
+        role = runtime.logic.roles(agreement)[0]
+        runtime.logic.decide_role(role.uuid, "accepted")
+        self.assertEqual(own_roles()["Participant"], "accepted")
+
     def test_the_creator_holds_identity_of_what_they_create(self):
         runtime = self.runtime(9488)
         agreement_uuid = runtime.logic.create_agreement("Charter").value

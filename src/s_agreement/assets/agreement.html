@@ -635,6 +635,7 @@
       refused: 'refused',
       expired: 'lapsed',
       outdated: 'accepted an earlier version',
+      uninvited: 'not invited to this agreement yet',
       unobserved: 'answer not visible from here',
     };
 
@@ -969,26 +970,13 @@
           for (const group of Object.values(groups)) {
             if (group.childElementCount) picker.append(group);
           }
-          // Structure is made by filling a seat, so a seat can also be filled
-          // by an agreement that does not exist yet.
-          const fresh = document.createElement('option');
-          fresh.value = '__new__';
-          fresh.textContent = 'A new agreement\u2026';
-          picker.append(fresh);
           picker.onchange = async () => {
             if (!picker.value) return;
             const chosen = picker.value;
             picker.value = '';
             try {
-              if (chosen === '__new__') {
-                const title = prompt(`Name the agreement to fill ${role.data.name}`);
-                if (!title || !title.trim()) return;
-                await api('/api/agreement/roles/seat_new',
-                  {role_uuid: role.uuid, title: title.trim()});
-              } else {
-                await api('/api/agreement/roles/offer',
-                  {role_uuid: role.uuid, actor_uuid: chosen});
-              }
+              await api('/api/agreement/roles/offer',
+                {role_uuid: role.uuid, actor_uuid: chosen});
               await load();
             } catch (error) { showToast(error.message, true); }
           };
@@ -1122,10 +1110,25 @@
             && !(identityState.claims || []).length)) {
         article.append(renderIdentity(identityState, currentInteractionAllowed));
       }
-      article.append(renderSeats(payload.parents, currentInteractionAllowed));
-      article.append(renderParticipants(
-        payload.participants, payload.identity, currentInteractionAllowed,
-      ));
+      // What the agreement says comes first; who is in it and what it
+      // expects of them follow. Collapsible, because once a document is
+      // settled the interesting part is the structure below it.
+      const content = document.createElement('section');
+      content.className = 'content';
+      const contentToggle = document.createElement('button');
+      contentToggle.type = 'button';
+      contentToggle.className = 'content-toggle';
+      const toggleLabel = open => (open ? '▾ ' : '▸ ') + 'Agreement text';
+      const contentOpen = ephemeral.contentCollapsed !== current.uuid;
+      contentToggle.textContent = toggleLabel(contentOpen);
+      contentToggle.onclick = () => {
+        const collapsed = !content.classList.contains('is-collapsed');
+        ephemeral.contentCollapsed = collapsed ? current.uuid : '';
+        content.classList.toggle('is-collapsed', collapsed);
+        contentToggle.textContent = toggleLabel(!collapsed);
+      };
+      content.classList.toggle('is-collapsed', !contentOpen);
+      content.append(contentToggle);
 
 
       const sections = displayedChildren(current, 'agreement_section');
@@ -1203,8 +1206,13 @@
             },
           }));
         });
-        article.append(block);
+        content.append(block);
       });
+      article.append(content);
+      article.append(renderSeats(payload.parents, currentInteractionAllowed));
+      article.append(renderParticipants(
+        payload.participants, payload.identity, currentInteractionAllowed,
+      ));
       article.append(renderRoles(current, currentInteractionAllowed));
       SovereignShell.refresh();
     };

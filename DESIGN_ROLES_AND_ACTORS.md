@@ -486,7 +486,10 @@ full re-render per payload.
 ```
 
 **[DONE]** The region is titled *Role Definitions & Invitations*, and it is
-the definition rather than the doing:
+the definition rather than the doing. It sits last: the agreement's text
+comes first (collapsible, since once a document is settled the interesting
+part is the structure below it), then who is in it — seats held and
+participants — then what it expects of them.
 
 - Name and purpose use the existing `editable` in-place pattern — click,
   commit on blur or Enter, revert on Escape. No modal between reader and text.
@@ -519,6 +522,7 @@ Six states, visually distinct, and `unobserved` must not read as `pending`:
 | refused | struck through, muted |
 | expired | amber, "lapsed 12 Jun" |
 | outdated | amber, "accepted an earlier version" + re-accept action |
+| uninvited | *not invited to this agreement yet* — actionable, and not the same as the next one |
 | unobserved | greyed italic, tooltip: *you don't sync with this person, so you can't see their decision* |
 
 ### 4.4 Identity
@@ -638,6 +642,14 @@ cannot live outside the DOM.
 
 ## 5. Open
 
+- **[DONE]** Reads memoise inside a scope. Building one payload asked
+  Session for the same identity, member lists, node lookups and content
+  hashes hundreds of times — `Session.identity` alone was read 349 times, and
+  each read snapshots the whole protocol tree — which cost **1125 ms per
+  build** against a 3-second poll. Scoped to a single read it is **67 ms**.
+  The scope is the read and nothing outside one caches, so a mutation can
+  never be served a stale entry; keying it on the view revision instead was
+  tried first and was wrong, because logic-level mutations do not advance it.
 - **[OPEN]** Whether two roles claiming the same domain in one agreement
   should be detected as a conflict. Out of scope for the first cut; named so
   it is not later mistaken for a bug.

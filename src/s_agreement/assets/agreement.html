@@ -771,6 +771,28 @@
         } else if (holder.decided_at) {
           state.title = new Date(holder.decided_at).toLocaleString();
         }
+        // A seat filled by another agreement opens it. Structure is made by
+        // filling a role, so this is where the organisation is walked.
+        if (holder.actor_kind === 'agreement') {
+          row.dataset.actorKind = 'agreement';
+          if (holder.joined) {
+            who.className = 'role-holder-name agreement-link';
+            who.tabIndex = 0;
+            who.title = `Open ${holder.name}`;
+            const open = () => selectAgreement(holder.actor_uuid);
+            who.onclick = open;
+            who.onkeydown = event => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                open();
+              }
+            };
+          } else {
+            state.textContent = 'separate membership';
+            state.title =
+              'This subagreement is invited separately; you have not joined it.';
+          }
+        }
         row.append(who, state);
 
         // Confirming somebody's request is an ordinary offer: their answer
@@ -899,6 +921,19 @@
           await api('/api/agreement/roles/create',
             {agreement_uuid: agreement.uuid, name});
         }));
+        // Structure is made by filling a seat, so creating a subagreement
+        // lives here beside the roles rather than in a section of its own.
+        if (payloadState.holds_role) {
+          section.append(composer(
+            'New subagreement name',
+            async title => {
+              await api('/api/agreement/agreements/create_subagreement', {
+                parent_agreement_uuid: agreement.uuid,
+                title,
+              });
+            },
+          ));
+        }
       }
       return section;
     };
@@ -987,68 +1022,6 @@
         payload.participants, payload.identity, currentInteractionAllowed,
       ));
 
-      const subagreements = displayedChildren(current, 'agreement_link');
-      const organizationSection = document.createElement('section');
-      organizationSection.className = 'subagreements';
-      const organizationHeading = document.createElement('div');
-      organizationHeading.className = 'subagreement-heading';
-      const heading = document.createElement('h3');
-      heading.textContent = 'Subagreements';
-      const explanation = document.createElement('p');
-      explanation.textContent = (
-        'Create a separate agreement, then invite only the people who should join it.'
-      );
-      organizationHeading.append(heading, explanation);
-      organizationSection.append(organizationHeading);
-      for (const {node: link, proposed} of subagreements) {
-        const row = elementRow({
-          node: link,
-          tag: 'p',
-          field: 'title',
-          proposed,
-          interactive: currentInteractionAllowed,
-        });
-        const linked = payload.agreements.some(
-          agreement => agreement.uuid === link.data.child_agreement_uuid,
-        );
-        const label = row.querySelector('.element-label');
-        if (linked && !proposed) {
-          label.classList.add('agreement-link');
-          label.tabIndex = 0;
-          label.title = 'Open subagreement';
-          label.onclick = () => selectAgreement(
-            link.data.child_agreement_uuid,
-          );
-          label.onkeydown = event => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault();
-              selectAgreement(link.data.child_agreement_uuid);
-            }
-          };
-        } else if (!proposed) {
-          const restricted = document.createElement('span');
-          restricted.className = 'restricted-badge';
-          restricted.textContent = 'Separate membership';
-          row.querySelector('.element-actions').append(restricted);
-        }
-        organizationSection.append(row);
-      }
-      if (currentInteractionAllowed && payload.holds_role) {
-        organizationSection.append(composer('New subagreement name', async title => {
-          await api('/api/agreement/agreements/create_subagreement', {
-            parent_agreement_uuid: current.uuid,
-            title,
-          });
-        }));
-      } else if (currentInteractionAllowed) {
-        const prerequisite = document.createElement('p');
-        prerequisite.className = 'subagreement-prerequisite';
-        prerequisite.textContent = (
-          'Take a role in this agreement before creating a subagreement.'
-        );
-        organizationSection.append(prerequisite);
-      }
-      article.append(organizationSection);
 
       const sections = displayedChildren(current, 'agreement_section');
       const sectionsHaveProposals = sections.some(entry => entry.proposed);

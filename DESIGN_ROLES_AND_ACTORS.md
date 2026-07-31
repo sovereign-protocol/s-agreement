@@ -39,7 +39,8 @@ agreement                          (topic, unchanged)
 │   ├── agreement_domain           data.text, data.order
 │   ├── agreement_role_offer       one per (role, actor); authored by Identity
 │   └── agreement_role_decision    one per (role, actor); by the actor
-└── agreement_role_holding         local mirror: "I hold role R in agreement P"
+└── agreement_role_holding         this agreement's seat elsewhere:
+                                   data.parent_agreement_uuid, data.role_uuid,
                                    data.order — the ordered parent list
 ```
 
@@ -383,14 +384,40 @@ role, and both see consistent badges; and when an Identity handover and a
 contested claim both render correctly and resolve through existing
 adopt/rollback.
 
-### Step 3 — Agreement as Actor
+### Step 3a — Agreement as Actor **[DONE]**
+
+The representation, with single-parent behaviour preserved so the existing
+suite polices it. `agreement_link` and `parent_agreement_uuid` are gone: a
+subagreement is an ordinary role in the parent offered to an Agreement
+actor, and an `agreement_role_holding` in the child naming that seat. Both
+sides must name the same seat before the relationship exists anywhere.
+
+Three things this surfaced:
+
+- **Adding a subunit no longer re-opens anybody's acceptance.** The seat is
+  a role, and roles are outside the document body hash, so the parent's
+  text is unchanged by gaining a subagreement. The `agreement_link` it
+  replaces *was* document content, which forced everyone to re-accept the
+  parent whenever the organisation grew. This also deleted the
+  `_reaffirm_holdings` call that existed only to paper over that.
+- **The two guards are not the same walk.** `_check_parent_chain` includes
+  the agreement being hung from — hanging something below an agreement
+  means taking part in it — while `_interaction_guard` excludes the
+  agreement being written to, which is why a root is always writable.
+  Collapsing them into one walk silently let anybody seat a subagreement
+  under an agreement they held nothing in.
+- **A holding has to be checkable before it is mounted**, so
+  `_holding_is_live` takes the holder rather than looking it up: the
+  invited subtree is not in the local index yet, which is the entire point
+  of checking it.
+
+### Step 3b — Multiple parents
 
 The graph step. Highest risk — schedule it alone.
 
 | Site | Now | Becomes |
 |---|---|---|
-| `agreement_link` | link node in parent | retired; replaced by an offer to an Agreement actor |
-| `parent_agreement_uuid` | single string in `data` | derived set of accepted holdings, ordered |
+| `parent_holdings` | one holding per agreement | several, ordered |
 | `_check_parent_chain` | `while parent_uuid:` | DFS, ANY valid path, cycle-safe |
 | `_interaction_guard` | linear walk | same DFS, memoized |
 | `organization_payload` | `parent_for: dict[str,str]`; second link silently dropped; `build()` recurses a tree | holding graph projected through derived home |

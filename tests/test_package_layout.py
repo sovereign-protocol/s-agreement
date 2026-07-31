@@ -291,9 +291,12 @@ class ThemeTests(unittest.TestCase):
         self.assertNotIn("color: #111827", self.css)
         self.assertNotIn("color:#111827", self.css)
 
-    def test_acceptance_strip_is_compact_with_controls_at_the_right(self):
-        self.assertIn(".acceptance-content", self.css)
-        self.assertIn("margin-left: auto", self.css)
+    def test_your_own_participant_line_is_set_apart(self):
+        # The agreement-level acceptance strip is gone. What replaced it
+        # leads with your own line, which is the only one that acts, so
+        # it is the one that has to look different.
+        self.assertIn(".participant.is-self", self.css)
+        self.assertIn(".participant.is-self .role-chip", self.css)
         self.assertIn("width: 22px", self.css)
 
 

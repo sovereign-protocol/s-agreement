@@ -29,10 +29,13 @@ class AgreementFacade:
     def clauses(self, section: ProtocolNode) -> list[ProtocolNode]:
         return self._logic.clauses(section)
 
-    def subagreement_links(
+    def parent_holdings(self, agreement: ProtocolNode) -> list[ProtocolNode]:
+        return self._logic.parent_holdings(agreement)
+
+    def child_agreements(
         self, agreement: ProtocolNode,
-    ) -> list[ProtocolNode]:
-        return self._logic.subagreement_links(agreement)
+    ) -> list[tuple[str, ProtocolNode]]:
+        return self._logic.child_agreements(agreement)
 
     def identity_holder(self, agreement: ProtocolNode) -> str:
         return self._logic.identity_holder(agreement)

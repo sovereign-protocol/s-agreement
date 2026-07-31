@@ -1,10 +1,11 @@
 """Agreement documents and their consent-based organizational hierarchy.
 
-Every agreement remains an independently shared topic.  A parent agreement
-contains an ``agreement_link`` that names a child topic, while the child topic
-also names its intended parent.  Consequently, accepting a parent never grants
-access to its children and a hierarchy is visible only after the relationship
-has been accepted in the parent as well.
+Every agreement remains an independently shared topic.  A subagreement is an
+Agreement holding a role in its parent: the parent carries an ordinary role
+offered to an Agreement actor, and the child carries an
+``agreement_role_holding`` naming which role in which parent.  Consequently,
+accepting a parent never grants access to its children, and a hierarchy is
+visible only once the seat has been taken on both sides.
 """
 
 from __future__ import annotations
@@ -59,8 +60,84 @@ class AgreementLogic:
     def clauses(self, section: ProtocolNode) -> list[ProtocolNode]:
         return self._ordered(section, "agreement_clause")
 
-    def subagreement_links(self, agreement: ProtocolNode) -> list[ProtocolNode]:
-        return self._ordered(agreement, "agreement_link")
+    # A subagreement is not a link any more: it is an Agreement holding a
+    # role in its parent, the same shape as a person holding one. The parent
+    # side is an ordinary role with an offer to an Agreement actor; the child
+    # side is an agreement_role_holding naming which role in which parent.
+    #
+    # The child keeps its own record rather than only the parent holding one,
+    # because somebody who has joined the child but not the parent still has
+    # to know a parent exists - that is what tells them the agreement is
+    # read-only until they join it.
+
+    def parent_holdings(self, agreement: ProtocolNode) -> list[ProtocolNode]:
+        """This agreement's roles in other agreements, in declared order."""
+        return self._ordered(agreement, "agreement_role_holding")
+
+    def child_agreements(
+        self, agreement: ProtocolNode,
+    ) -> list[tuple[str, ProtocolNode]]:
+        """(child agreement uuid, the role it was offered) for each subunit."""
+        found = []
+        for role in self.roles(agreement):
+            for offer in self.role_offers(role):
+                if offer.data.get("actor_kind") == "agreement":
+                    child_uuid = str(offer.data.get("actor_uuid") or "").strip()
+                    if child_uuid:
+                        found.append((child_uuid, role))
+        return found
+
+    def _agreement_holds_role(
+        self, role: ProtocolNode, actor_uuid: str,
+    ) -> bool:
+        """Whether an Agreement actor's holding of this role is live.
+
+        Offer plus accepted answer, exactly as for a person. Deliberately not
+        checking that the answer is against the current version: that would
+        mean every edit to a parent freezes every subagreement until somebody
+        re-accepts on each one's behalf, on top of each person re-accepting
+        their own roles. Left for step 3b to decide with the ANY-path guard.
+        """
+        if not self._offer_for(role, actor_uuid):
+            return False
+        answer = next(
+            (
+                child for child in role.live_children()
+                if (
+                    child.data.get("type") == "agreement_role_decision"
+                    and child.data.get("actor_uuid") == actor_uuid
+                )
+            ),
+            None,
+        )
+        return bool(
+            answer
+            and answer.data.get("decision") == "accepted"
+            and not self._is_expired(answer.data.get("expires_at"))
+        )
+
+    def _holding_is_live(
+        self, holder: ProtocolNode, holding: ProtocolNode,
+    ) -> bool:
+        """Whether `holder` really occupies the seat this holding names.
+
+        The holder is passed rather than looked up, because this also runs
+        against an invited subtree that is not in the local index yet - which
+        is the whole point of checking it before mounting.
+        """
+        parent = self._node(
+            str(holding.data.get("parent_agreement_uuid") or "").strip(),
+            "agreement",
+        )
+        role = self._node(
+            str(holding.data.get("role_uuid") or "").strip(), "agreement_role",
+        )
+        # The role has to be one of that parent's own: a holding naming
+        # somebody else's role says nothing about this relationship.
+        owner = self._local_agreement_topic(role.uuid) if role else None
+        if not parent or not role or not owner or owner.uuid != parent.uuid:
+            return False
+        return self._agreement_holds_role(role, holder.uuid)
 
     @staticmethod
     def _ordered(parent: ProtocolNode, node_type: str) -> list[ProtocolNode]:
@@ -101,7 +178,7 @@ class AgreementLogic:
         parent = self._node(parent_agreement_uuid, "agreement")
         if not parent:
             return SessionResult("error", reason="parent agreement not found")
-        prerequisites = self._check_parent_chain(parent.uuid)
+        prerequisites = self._check_parent_chain(parent)
         if prerequisites.status != "ok":
             return prerequisites
         normalized = str(title or "").strip()
@@ -110,28 +187,16 @@ class AgreementLogic:
 
         created = self.session.create_child(
             self._agreement_container().uuid,
-            {
-                "type": "agreement",
-                "title": normalized,
-                "parent_agreement_uuid": parent.uuid,
-            },
+            {"type": "agreement", "title": normalized},
             {},
         )
         if created.status != "ok":
             return created
         child = created.value
-        linked = self.session.create_child(
-            parent.uuid,
-            {
-                "type": "agreement_link",
-                "child_agreement_uuid": child.uuid,
-                "title": normalized,
-                "order": self.session.next_child_order(
-                    parent.uuid, "agreement_link",
-                ),
-            },
-            {},
-        )
+        # Making a subagreement is filling a seat: a role in the parent,
+        # offered to the new agreement, which takes it. The creator holds the
+        # child's Identity, so they are the one who can answer for it.
+        linked = self._seat_a_subagreement(parent, child, normalized)
         if linked.status != "ok":
             self.session.delete(child.uuid)
             return linked
@@ -139,12 +204,6 @@ class AgreementLogic:
         # which is what makes them part of it.
         child_identity = self._create_identity(child)
         child_participant = self._create_default_participant(child)
-        # The link is part of the parent document, so adding it outdates the
-        # creator's own acceptance of the parent - leaving them holding a
-        # stale acceptance of a change they just made, and unable to make a
-        # second subagreement, since that needs a current one. Making the
-        # change is accepting it.
-        reaffirmed = self._reaffirm_holdings(parent.uuid)
         self._remember_agreement(child.uuid)
         return SessionResult(
             "ok",
@@ -154,7 +213,81 @@ class AgreementLogic:
                 *linked.effects,
                 *child_identity.effects,
                 *child_participant.effects,
-                *reaffirmed.effects,
+            ],
+        )
+
+    def _seat_a_subagreement(
+        self, parent: ProtocolNode, child: ProtocolNode, title: str,
+    ) -> SessionResult:
+        """Create the parent-side role and both sides of the holding."""
+        role = self.session.create_child(
+            parent.uuid,
+            {
+                "type": "agreement_role",
+                "name": title,
+                "purpose": "",
+                "order": self.session.next_child_order(
+                    parent.uuid, "agreement_role",
+                ),
+            },
+            {},
+        )
+        if role.status != "ok":
+            return role
+        offer = self.session.create_child(
+            role.value.uuid,
+            {
+                "type": "agreement_role_offer",
+                "actor_uuid": child.uuid,
+                "actor_kind": "agreement",
+                "offered_by": self.session.identity.uuid,
+                "offered_at": self._now(),
+                "revoked_at": None,
+            },
+            {},
+        )
+        if offer.status != "ok":
+            return offer
+        # Answered on the child's behalf by whoever holds its Identity, which
+        # at creation is the person doing this. decided_by records who that
+        # was, since an agreement cannot sign anything itself.
+        answer = self.session.create_child(
+            role.value.uuid,
+            {
+                "type": "agreement_role_decision",
+                "actor_uuid": child.uuid,
+                "decided_by": self.session.identity.uuid,
+                "decision": "accepted",
+                "decided_at": self._now(),
+                "reference_hash": self.role_reference_hash(
+                    parent, role.value,
+                ),
+                "expires_at": None,
+            },
+            {},
+        )
+        if answer.status != "ok":
+            return answer
+        holding = self.session.create_child(
+            child.uuid,
+            {
+                "type": "agreement_role_holding",
+                "parent_agreement_uuid": parent.uuid,
+                "role_uuid": role.value.uuid,
+                "order": self.session.next_child_order(
+                    child.uuid, "agreement_role_holding",
+                ),
+            },
+            {},
+        )
+        if holding.status != "ok":
+            return holding
+        return SessionResult(
+            "ok",
+            value=role.value.uuid,
+            effects=[
+                *role.effects, *offer.effects,
+                *answer.effects, *holding.effects,
             ],
         )
 
@@ -234,21 +367,10 @@ class AgreementLogic:
         return self.session.modify(clause.uuid, data, clause.weights)
 
     def rename_agreement(self, agreement_uuid: str, title: str) -> SessionResult:
-        result = self._retitle(
-            agreement_uuid, "agreement", "title", title,
-        )
-        if result.status != "ok":
-            return result
-        normalized = str(title or "").strip()
-        effects = list(result.effects)
-        for link in self._links_to(agreement_uuid):
-            data = dict(link.data)
-            data["title"] = normalized
-            updated = self.session.modify(link.uuid, data, link.weights)
-            if updated.status == "ok":
-                effects.extend(updated.effects)
-        result.effects = effects
-        return result
+        # The seat in the parent keeps its own name. It is what the parent
+        # expects of this body, which is not the same thing as what the
+        # body calls itself.
+        return self._retitle(agreement_uuid, "agreement", "title", title)
 
     def rename_section(self, section_uuid: str, title: str) -> SessionResult:
         return self._retitle(section_uuid, "agreement_section", "title", title)
@@ -281,22 +403,28 @@ class AgreementLogic:
             return allowed
         effects = []
         # The child topics are independent agreements, so deleting a parent
-        # promotes them rather than cascading through the organization.
-        for link in self.subagreement_links(agreement):
-            child = self._node(
-                link.data.get("child_agreement_uuid"), "agreement",
-            )
+        # promotes them rather than cascading through the organization:
+        # their side of the seat goes, and they become roots.
+        for child_uuid, _role in self.child_agreements(agreement):
+            child = self._node(child_uuid, "agreement")
             if not child:
                 continue
-            data = dict(child.data)
-            data.pop("parent_agreement_uuid", None)
-            detached = self.session.modify(child.uuid, data, child.weights)
-            if detached.status == "ok":
-                effects.extend(detached.effects)
-        # Removing a child also proposes removal of its organizational link
-        # to every participant in the parent agreement.
-        for link in self._links_to(agreement.uuid):
-            removed = self.session.delete(link.uuid)
+            for holding in self.parent_holdings(child):
+                if holding.data.get("parent_agreement_uuid") != agreement.uuid:
+                    continue
+                dropped = self.session.delete(holding.uuid)
+                if dropped.status == "ok":
+                    effects.extend(dropped.effects)
+        # And this agreement's own seats elsewhere go with it, so no parent
+        # is left holding a role nobody can fill.
+        for holding in self.parent_holdings(agreement):
+            role = self._node(
+                str(holding.data.get("role_uuid") or "").strip(),
+                "agreement_role",
+            )
+            if not role:
+                continue
+            removed = self.session.delete(role.uuid)
             if removed.status == "ok":
                 effects.extend(removed.effects)
         release = self.session.end_topic_sharing(agreement.uuid)
@@ -849,9 +977,15 @@ class AgreementLogic:
             return SessionResult(
                 "error", reason="expiration must be an ISO date or timestamp",
             )
-        return self._record_role_decision(
+        recorded = self._record_role_decision(
             agreement, role, normalized_decision, normalized_expiry,
         )
+        if recorded.status == "ok" and normalized_decision == "accepted":
+            # A subagreement invitation may already be cached and deliberately
+            # unmounted because this session held nothing in an ancestor. It
+            # does now.
+            self.session.mount_cached_topics(AGREEMENT_APPLICATION_ID)
+        return recorded
 
     def resign_role(self, role_uuid: str) -> SessionResult:
         """Step out of a role. Deleting only what this participant wrote."""
@@ -1033,6 +1167,13 @@ class AgreementLogic:
                 status = "outdated"
             else:
                 status = "accepted"
+            # An Agreement actor is not among the people on this topic, so it
+            # is named by the agreement it is, when that is joined here.
+            seated = (
+                self._node(actor_uuid, "agreement")
+                if (offer and offer.data.get("actor_kind") == "agreement")
+                else None
+            )
             holders.append({
                 "actor_uuid": actor_uuid,
                 # A request that has since been confirmed: the offer exists,
@@ -1045,7 +1186,14 @@ class AgreementLogic:
                     and actor_uuid == self.session.identity.uuid
                     and self._offer_proposed_to_me(agreement, role)
                 ),
-                "name": (member or {}).get("name") or "Not on this topic",
+                "name": (
+                    (seated.data.get("title") or "Untitled agreement")
+                    if seated
+                    else (member or {}).get("name") or "Not on this topic"
+                ),
+                "joined": bool(seated) if (
+                    offer and offer.data.get("actor_kind") == "agreement"
+                ) else None,
                 # Individual or Agreement. The view draws them differently,
                 # because "a person holds this" and "a body holds this" are
                 # not the same fact.
@@ -1148,15 +1296,12 @@ class AgreementLogic:
     def accept_agreement_invitation(self, subtree: ProtocolNode) -> SessionResult:
         if subtree.data.get("type") != "agreement":
             return SessionResult("error", reason="invited topic is not an agreement")
-        parent_uuid = str(
-            subtree.data.get("parent_agreement_uuid") or "",
-        ).strip()
-        if parent_uuid:
-            prerequisites = self._check_parent_chain(
-                parent_uuid, subtree.uuid,
-            )
-            if prerequisites.status != "ok":
-                return prerequisites
+        # The invited subtree carries its own holdings, so its ancestry can
+        # be checked before it is mounted. Joining it does not require
+        # holding anything in it - that comes after, by asking.
+        prerequisites = self._joining_guard(subtree)
+        if prerequisites.status != "ok":
+            return prerequisites
         result = self.session.accept_topic_invitation(
             subtree, self._agreement_container().uuid,
         )
@@ -1172,8 +1317,9 @@ class AgreementLogic:
     # it. Both primitives are Session's; this application only names which
     # node types may be reacted to.
     REACTABLE = frozenset({
-        "agreement", "agreement_section", "agreement_clause", "agreement_link",
+        "agreement", "agreement_section", "agreement_clause",
         "agreement_role", "agreement_accountability", "agreement_domain",
+        "agreement_role_holding",
         "agreement_identity", "agreement_role_offer", "agreement_role_decision",
     })
     OWNED_NODE_TYPES = frozenset({
@@ -1517,15 +1663,16 @@ class AgreementLogic:
         seen = {root.uuid}
         while pending:
             parent = pending.pop(0)
-            for link in self.subagreement_links(parent):
-                child_uuid = str(
-                    link.data.get("child_agreement_uuid") or "",
-                ).strip()
+            for child_uuid, role in self.child_agreements(parent):
                 child = self._node(child_uuid, "agreement")
-                if (
-                    not child
-                    or child.uuid in seen
-                    or child.data.get("parent_agreement_uuid") != parent.uuid
+                if not child or child.uuid in seen:
+                    continue
+                # Both sides have to name the same seat. A role offered to
+                # an agreement that never took it is not a subagreement.
+                if not any(
+                    holding.data.get("parent_agreement_uuid") == parent.uuid
+                    and holding.data.get("role_uuid") == role.uuid
+                    for holding in self.parent_holdings(child)
                 ):
                     continue
                 seen.add(child.uuid)
@@ -1612,7 +1759,6 @@ class AgreementLogic:
         """
         return self._content_hash(agreement, {
             "agreement", "agreement_section", "agreement_clause",
-            "agreement_link",
         })
 
     @staticmethod
@@ -1641,52 +1787,79 @@ class AgreementLogic:
         ).encode("utf-8")
         return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
-    def _check_parent_chain(
-        self,
-        parent_uuid: str,
-        expected_child_uuid: str | None = None,
-    ) -> SessionResult:
-        seen = set()
-        while parent_uuid:
+    def _ancestry_problem(
+        self, agreement: ProtocolNode,
+    ) -> tuple[str, str] | None:
+        """The first thing standing between this agreement and a root.
+
+        One walk for both guards, so joining a subagreement and writing in
+        one cannot disagree about what counts. Returns (kind, title), or None
+        when the agreement is reachable - a root, or every step accepted.
+
+        Still a single chain in this step: an agreement holds at most one
+        role elsewhere until 3b allows several and this becomes an ANY-path
+        search over the holding graph.
+        """
+        seen = {agreement.uuid}
+        current = agreement
+        while True:
+            holdings = self.parent_holdings(current)
+            if not holdings:
+                return None
+            holding = holdings[0]
+            parent_uuid = str(
+                holding.data.get("parent_agreement_uuid") or "",
+            ).strip()
             if parent_uuid in seen:
-                return SessionResult(
-                    "error", reason="agreement hierarchy contains a cycle",
-                )
+                return ("cycle", "")
             seen.add(parent_uuid)
             parent = self._node(parent_uuid, "agreement")
             if not parent:
-                return SessionResult(
-                    "error",
-                    reason=(
-                        "Join and accept every parent agreement before "
-                        "joining this subagreement"
-                    ),
-                )
-            if expected_child_uuid and not any(
-                link.data.get("child_agreement_uuid") == expected_child_uuid
-                for link in self.subagreement_links(parent)
-            ):
-                return SessionResult(
-                    "error",
-                    reason=(
-                        "The parent agreement has not accepted this "
-                        "subagreement yet"
-                    ),
-                )
+                return ("unjoined", "")
+            if not self._holding_is_live(current, holding):
+                return ("unseated", parent.data.get("title") or "")
             if not self._has_current_acceptance(parent):
-                title = parent.data.get("title") or "parent agreement"
-                return SessionResult(
-                    "error",
-                    reason=(
-                        f"Accept the current version of {title} before "
-                        "joining its subagreement"
-                    ),
-                )
-            expected_child_uuid = parent.uuid
-            parent_uuid = str(
-                parent.data.get("parent_agreement_uuid") or "",
-            ).strip()
-        return SessionResult("ok")
+                return ("stale", parent.data.get("title") or "Parent agreement")
+            current = parent
+
+    def _check_parent_chain(self, parent: ProtocolNode) -> SessionResult:
+        """Whether a subagreement may be seated under `parent`.
+
+        Unlike the read-only guard this includes `parent` itself: hanging
+        something below an agreement means taking part in that agreement, not
+        merely being able to reach it. The guard proper excludes the
+        agreement being written to, which is why a root is always writable.
+        """
+        if not self._has_current_acceptance(parent):
+            title = parent.data.get("title") or "parent agreement"
+            return SessionResult(
+                "error",
+                reason=(
+                    f"Accept the current version of {title} before joining "
+                    "its subagreement"
+                ),
+            )
+        return self._joining_guard(parent)
+
+    def _joining_guard(self, agreement: ProtocolNode) -> SessionResult:
+        problem = self._ancestry_problem(agreement)
+        if not problem:
+            return SessionResult("ok")
+        kind, title = problem
+        return SessionResult("error", reason={
+            "cycle": "agreement hierarchy contains a cycle",
+            "unjoined": (
+                "Join and accept every parent agreement before joining this "
+                "subagreement"
+            ),
+            "unseated": (
+                "The parent agreement has not accepted this subagreement yet"
+            ),
+            "stale": (
+                f"Accept the current version of {title} before joining its "
+                "subagreement"
+            ),
+        }[kind])
 
     def _has_current_acceptance(self, agreement: ProtocolNode) -> bool:
         """Whether this participant currently holds a role in this agreement.
@@ -1791,6 +1964,10 @@ class AgreementLogic:
 
         Membership is topic-scoped: a person appears on an agreement only
         when this Session knows that peer to discuss that exact topic.
+
+        A subagreement shows only where both sides name the same seat - the
+        parent offering a role to that agreement, and that agreement holding
+        it. One side alone cannot reorganise somebody else's agreement.
         """
         agreements = self.agreements()
         summaries = {
@@ -1801,9 +1978,7 @@ class AgreementLogic:
                 "interaction_allowed": (
                     self._interaction_guard(agreement).status == "ok"
                 ),
-                "declared_parent_uuid": agreement.data.get(
-                    "parent_agreement_uuid",
-                ),
+                "declared_parent_uuid": self._declared_parent_uuid(agreement),
                 "members": self._topic_members(agreement.uuid),
                 "children": [],
             }
@@ -1825,18 +2000,19 @@ class AgreementLogic:
             return False
 
         for parent in agreements:
-            for link in self.subagreement_links(parent):
-                child_uuid = str(
-                    link.data.get("child_agreement_uuid") or "",
-                ).strip()
+            for child_uuid, role in self.child_agreements(parent):
                 if not child_uuid or child_uuid == parent.uuid:
                     continue
                 child = summaries.get(child_uuid)
                 if child is not None:
-                    # Both topics must agree about the same parent.  A link
-                    # alone cannot reorganize somebody else's agreement.
+                    joined = self._node(child_uuid, "agreement")
+                    takes_the_seat = joined is not None and any(
+                        holding.data.get("parent_agreement_uuid") == parent.uuid
+                        and holding.data.get("role_uuid") == role.uuid
+                        for holding in self.parent_holdings(joined)
+                    )
                     if (
-                        child.get("declared_parent_uuid") != parent.uuid
+                        not takes_the_seat
                         or child_uuid in parent_for
                         or creates_cycle(parent.uuid, child_uuid)
                     ):
@@ -1847,11 +2023,12 @@ class AgreementLogic:
                         "joined": True,
                     })
                 else:
+                    # Offered a seat here, but its topic is somebody else's to
+                    # invite, so only the seat's name can be shown.
                     children_for[parent.uuid].append({
                         "uuid": child_uuid,
                         "title": (
-                            link.data.get("title")
-                            or "Restricted subagreement"
+                            role.data.get("name") or "Restricted subagreement"
                         ),
                         "joined": False,
                         "interaction_allowed": False,
@@ -1886,48 +2063,29 @@ class AgreementLogic:
         ]
         return {"roots": roots, "agreement_count": len(agreements)}
 
+    def _declared_parent_uuid(self, agreement: ProtocolNode) -> str | None:
+        """Which agreement this one says it holds a role in, if any."""
+        holdings = self.parent_holdings(agreement)
+        if not holdings:
+            return None
+        return str(
+            holdings[0].data.get("parent_agreement_uuid") or "",
+        ).strip() or None
+
     def _interaction_guard(self, agreement: ProtocolNode) -> SessionResult:
-        parent_uuid = str(
-            agreement.data.get("parent_agreement_uuid") or "",
-        ).strip()
-        expected_child_uuid = agreement.uuid
-        seen = set()
-        while parent_uuid:
-            if parent_uuid in seen:
-                return SessionResult(
-                    "error", reason="Read-only: agreement hierarchy has a cycle",
-                )
-            seen.add(parent_uuid)
-            parent = self._node(parent_uuid, "agreement")
-            if not parent:
-                return SessionResult(
-                    "error",
-                    reason="Read-only until every parent agreement is joined",
-                )
-            if not any(
-                link.data.get("child_agreement_uuid") == expected_child_uuid
-                for link in self.subagreement_links(parent)
-            ):
-                return SessionResult(
-                    "error",
-                    reason=(
-                        "Read-only until the parent accepts this "
-                        "subagreement relationship"
-                    ),
-                )
-            if not self._has_current_acceptance(parent):
-                title = parent.data.get("title") or "Parent agreement"
-                return SessionResult(
-                    "error",
-                    reason=(
-                        f"Read-only because {title} is not currently accepted"
-                    ),
-                )
-            expected_child_uuid = parent.uuid
-            parent_uuid = str(
-                parent.data.get("parent_agreement_uuid") or "",
-            ).strip()
-        return SessionResult("ok")
+        problem = self._ancestry_problem(agreement)
+        if not problem:
+            return SessionResult("ok")
+        kind, title = problem
+        return SessionResult("error", reason={
+            "cycle": "Read-only: agreement hierarchy has a cycle",
+            "unjoined": "Read-only until every parent agreement is joined",
+            "unseated": (
+                "Read-only until the parent accepts this subagreement "
+                "relationship"
+            ),
+            "stale": f"Read-only because {title} is not currently accepted",
+        }[kind])
 
     def _interaction_guard_for_node(self, node_uuid: str) -> SessionResult:
         agreement = self._local_agreement_topic(node_uuid)
@@ -2003,14 +2161,6 @@ class AgreementLogic:
             )
             else None
         )
-
-    def _links_to(self, agreement_uuid: str) -> list[ProtocolNode]:
-        return [
-            link
-            for agreement in self.agreements()
-            for link in self.subagreement_links(agreement)
-            if link.data.get("child_agreement_uuid") == agreement_uuid
-        ]
 
     def owns_node(self, node_uuid: str, peer_addr: str | None = None) -> bool:
         """Whether one side's node belongs to an Agreement topic and schema."""

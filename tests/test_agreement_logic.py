@@ -325,11 +325,21 @@ class AgreementLogicTests(unittest.TestCase):
 
         parent = runtime.session.protocol.index[parent_uuid]
         child = runtime.session.protocol.index[child_uuid]
-        links = runtime.logic.subagreement_links(parent)
+        # A subagreement is an Agreement holding a role in its parent, so
+        # the parent side is an ordinary role offered to an Agreement
+        # actor and the child side names that same seat.
+        seats = runtime.logic.child_agreements(parent)
         self.assertEqual(child.parent_uuid, parent.parent_uuid)
-        self.assertEqual(child.data["parent_agreement_uuid"], parent_uuid)
-        self.assertEqual(len(links), 1)
-        self.assertEqual(links[0].data["child_agreement_uuid"], child_uuid)
+        self.assertEqual(len(seats), 1)
+        seated_uuid, role = seats[0]
+        self.assertEqual(seated_uuid, child_uuid)
+        self.assertEqual(role.data["name"], "Finance circle")
+        holdings = runtime.logic.parent_holdings(child)
+        self.assertEqual(len(holdings), 1)
+        self.assertEqual(
+            holdings[0].data["parent_agreement_uuid"], parent_uuid,
+        )
+        self.assertEqual(holdings[0].data["role_uuid"], role.uuid)
         self.assertEqual(
             {item.uuid for item in runtime.logic.agreements()},
             {parent_uuid, child_uuid},
@@ -385,9 +395,9 @@ class AgreementLogicTests(unittest.TestCase):
         child_uuid = left.logic.create_subagreement(
             parent_uuid, "Finance circle",
         ).value
-        link_uuid = left.logic.subagreement_links(
+        link_uuid = left.logic.child_agreements(
             left.session.protocol.index[parent_uuid],
-        )[0].uuid
+        )[0][1].uuid
         sync(left, right)
 
         right_agreements = {item.uuid for item in right.logic.agreements()}
@@ -411,26 +421,63 @@ class AgreementLogicTests(unittest.TestCase):
         self.assertEqual(restricted["uuid"], child_uuid)
         self.assertFalse(restricted["joined"])
 
-        # The child invitation alone is not enough: the link is part of the
-        # parent document, so taking it up changed the version the role was
-        # accepted against.
-        self.assertEqual(connect(left, right, child_uuid)["status"], "ok")
-        self.assertNotIn(
-            child_uuid, {item.uuid for item in right.logic.agreements()},
-        )
-        self.assertEqual(self.own_standing(right, parent_uuid), "outdated")
-
-        # Taking the role up again against the current version unlocks the
-        # already cached child invitation.
-        self.rejoin(right, parent_uuid)
+        # Taking up the seat does not disturb anybody's acceptance of the
+        # parent. A subagreement seat is a role, and a role is outside the
+        # document body, so adding a subunit changes nothing that anyone
+        # agreed to - unlike the link it replaces, which forced everyone to
+        # re-accept the parent whenever the organisation grew.
         self.assertEqual(self.own_standing(right, parent_uuid), "accepted")
+
+        # The invitation is still needed, and it mounts only because a role
+        # is held in the parent.
+        self.assertEqual(connect(left, right, child_uuid)["status"], "ok")
         right.session.mount_cached_topics("agreement")
         sync(left, right)
+        self.assertIn(
+            child_uuid, {item.uuid for item in right.logic.agreements()},
+        )
         parent_view = next(
             item for item in right.logic.organization_payload()["roots"]
             if item["uuid"] == parent_uuid
         )
         self.assertTrue(parent_view["children"][0]["joined"])
+
+    def test_a_subagreement_stays_unmounted_while_no_role_is_held_above_it(self):
+        # The mounting rule the test above relies on, on its own: an
+        # invitation to a subagreement is cached rather than mounted until
+        # this session holds something in every agreement above it.
+        left, right = self.runtime(9512), self.runtime(9513)
+        parent_uuid = left.logic.create_agreement("Cooperative").value
+        child_uuid = left.logic.create_subagreement(
+            parent_uuid, "Finance circle",
+        ).value
+        self.assertEqual(connect(left, right, parent_uuid)["status"], "ok")
+        right.logic.accept_agreement_invitation(
+            right.session.protocol.index[parent_uuid],
+        )
+        sync(left, right)
+
+        # Present in the parent, holding nothing in it.
+        self.assertEqual(connect(left, right, child_uuid)["status"], "ok")
+        right.session.mount_cached_topics("agreement")
+        self.assertNotIn(
+            child_uuid, {item.uuid for item in right.logic.agreements()},
+        )
+
+        # Asking and being confirmed is what opens it.
+        participant_uuid = right.logic.roles(
+            right.session.protocol.index[parent_uuid],
+        )[0].uuid
+        right.logic.decide_role(participant_uuid, "accepted")
+        sync(left, right)
+        left.logic.offer_role(participant_uuid, right.session.identity.uuid)
+        sync(left, right)
+        right.logic.decide_role(participant_uuid, "accepted")
+        sync(left, right)
+        right.session.mount_cached_topics("agreement")
+        self.assertIn(
+            child_uuid, {item.uuid for item in right.logic.agreements()},
+        )
     def test_deleting_parent_promotes_child_instead_of_deleting_it(self):
         runtime = self.runtime(9463)
         parent_uuid = runtime.logic.create_agreement("Cooperative").value

@@ -340,6 +340,160 @@ class AgreementLogic:
             return allowed
         return self.session.move_child_to_index(clause_uuid, index)
 
+    # Roles are document content: a role is part of what people agree to,
+    # not administration layered on top of it. Accountabilities and domains
+    # are the same shape - text plus order, owned by a role - so they share
+    # one set of write paths. They are separate node types rather than a
+    # list inside the role's data because REACTABLE is per node: two people
+    # editing different accountabilities have to diverge separately, exactly
+    # as two clauses do. A list would collapse both edits into one
+    # undiffable conflict.
+    ROLE_ITEM_TYPES = {
+        "accountability": "agreement_accountability",
+        "domain": "agreement_domain",
+    }
+
+    def roles(self, agreement: ProtocolNode) -> list[ProtocolNode]:
+        return self._ordered(agreement, "agreement_role")
+
+    def accountabilities(self, role: ProtocolNode) -> list[ProtocolNode]:
+        return self._ordered(role, "agreement_accountability")
+
+    def domains(self, role: ProtocolNode) -> list[ProtocolNode]:
+        return self._ordered(role, "agreement_domain")
+
+    def create_role(self, agreement_uuid: str, name: str) -> SessionResult:
+        agreement = self._node(agreement_uuid, "agreement")
+        if not agreement:
+            return SessionResult("error", reason="agreement not found")
+        allowed = self._interaction_guard(agreement)
+        if allowed.status != "ok":
+            return allowed
+        normalized = str(name or "").strip()
+        if not normalized:
+            return SessionResult("error", reason="role name is required")
+        result = self.session.create_child(
+            agreement.uuid,
+            {
+                "type": "agreement_role",
+                "name": normalized,
+                "purpose": "",
+                "order": self.session.next_child_order(
+                    agreement.uuid, "agreement_role",
+                ),
+            },
+            {},
+        )
+        if result.status == "ok":
+            return SessionResult(
+                "ok", value=result.value.uuid, effects=result.effects,
+            )
+        return result
+
+    def rename_role(self, role_uuid: str, name: str) -> SessionResult:
+        return self._retitle(role_uuid, "agreement_role", "name", name)
+
+    def set_role_purpose(self, role_uuid: str, purpose: str) -> SessionResult:
+        # A purpose may be cleared. Unlike the name it does not identify the
+        # role, so _retitle's "required" rule would be wrong here.
+        role = self._node(role_uuid, "agreement_role")
+        if not role:
+            return SessionResult("error", reason="role not found")
+        allowed = self._interaction_guard_for_node(role.uuid)
+        if allowed.status != "ok":
+            return allowed
+        data = dict(role.data)
+        data["purpose"] = str(purpose or "").strip()
+        return self.session.modify(role.uuid, data, role.weights)
+
+    def delete_role(self, role_uuid: str) -> SessionResult:
+        role = self._node(role_uuid, "agreement_role")
+        if not role:
+            return SessionResult("error", reason="role not found")
+        allowed = self._interaction_guard_for_node(role.uuid)
+        if allowed.status != "ok":
+            return allowed
+        return self.session.delete(role.uuid)
+
+    def move_role(self, role_uuid: str, index: int) -> SessionResult:
+        if not self._node(role_uuid, "agreement_role"):
+            return SessionResult("error", reason="role not found")
+        allowed = self._interaction_guard_for_node(role_uuid)
+        if allowed.status != "ok":
+            return allowed
+        return self.session.move_child_to_index(role_uuid, index)
+
+    def create_role_item(
+        self, role_uuid: str, kind: str, text: str,
+    ) -> SessionResult:
+        node_type = self.ROLE_ITEM_TYPES.get(str(kind or "").strip())
+        if not node_type:
+            return SessionResult(
+                "error", reason="kind must be accountability or domain",
+            )
+        role = self._node(role_uuid, "agreement_role")
+        if not role:
+            return SessionResult("error", reason="role not found")
+        allowed = self._interaction_guard_for_node(role.uuid)
+        if allowed.status != "ok":
+            return allowed
+        normalized = str(text or "").strip()
+        if not normalized:
+            return SessionResult("error", reason=f"{kind} text is required")
+        result = self.session.create_child(
+            role.uuid,
+            {
+                "type": node_type,
+                "text": normalized,
+                "order": self.session.next_child_order(role.uuid, node_type),
+            },
+            {},
+        )
+        if result.status == "ok":
+            return SessionResult(
+                "ok", value=result.value.uuid, effects=result.effects,
+            )
+        return result
+
+    def update_role_item(self, item_uuid: str, text: str) -> SessionResult:
+        item = self._role_item(item_uuid)
+        if not item:
+            return SessionResult("error", reason="role item not found")
+        allowed = self._interaction_guard_for_node(item.uuid)
+        if allowed.status != "ok":
+            return allowed
+        normalized = str(text or "").strip()
+        if not normalized:
+            return SessionResult("error", reason="text is required")
+        data = dict(item.data)
+        data["text"] = normalized
+        return self.session.modify(item.uuid, data, item.weights)
+
+    def delete_role_item(self, item_uuid: str) -> SessionResult:
+        item = self._role_item(item_uuid)
+        if not item:
+            return SessionResult("error", reason="role item not found")
+        allowed = self._interaction_guard_for_node(item.uuid)
+        if allowed.status != "ok":
+            return allowed
+        return self.session.delete(item.uuid)
+
+    def move_role_item(self, item_uuid: str, index: int) -> SessionResult:
+        if not self._role_item(item_uuid):
+            return SessionResult("error", reason="role item not found")
+        allowed = self._interaction_guard_for_node(item_uuid)
+        if allowed.status != "ok":
+            return allowed
+        return self.session.move_child_to_index(item_uuid, index)
+
+    def _role_item(self, item_uuid: str) -> ProtocolNode | None:
+        # A stored node names its own kind, so only creation has to be told
+        # which one it is.
+        for node_type in self.ROLE_ITEM_TYPES.values():
+            if node := self._node(item_uuid, node_type):
+                return node
+        return None
+
     def accept_agreement_invitation(self, subtree: ProtocolNode) -> SessionResult:
         if subtree.data.get("type") != "agreement":
             return SessionResult("error", reason="invited topic is not an agreement")
@@ -371,6 +525,7 @@ class AgreementLogic:
     # node types may be reacted to.
     REACTABLE = frozenset({
         "agreement", "agreement_section", "agreement_clause", "agreement_link",
+        "agreement_role", "agreement_accountability", "agreement_domain",
     })
     OWNED_NODE_TYPES = frozenset({
         *REACTABLE, "agenda_item", "agreement_decision",
@@ -807,7 +962,15 @@ class AgreementLogic:
         return badges
 
     def agreement_reference_hash(self, agreement: ProtocolNode) -> str:
-        """Hash agreement content without participant decision records."""
+        """Hash agreement content without participant decision records.
+
+        Role nodes are deliberately absent. An acceptance covers the document
+        body plus the definitions of the roles that participant *holds*, so
+        that editing one role does not re-open everybody else's acceptance.
+        Nobody holds a role yet, which makes the held-role contribution empty
+        and this hash exactly right for now; the scoping becomes visible when
+        holdings arrive.
+        """
         included_types = {
             "agreement", "agreement_section", "agreement_clause",
             "agreement_link",

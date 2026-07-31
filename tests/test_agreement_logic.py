@@ -804,6 +804,201 @@ class AgreementLogicTests(unittest.TestCase):
             ["Clause one.", "Clause two."],
         )
 
+    def test_a_role_carries_accountabilities_and_domains_as_nodes(self):
+        runtime = self.runtime(9480)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        role_uuid = runtime.logic.create_role(agreement_uuid, "Treasurer").value
+        runtime.logic.set_role_purpose(
+            role_uuid, "Keep the books honest and current",
+        )
+        accountability = runtime.logic.create_role_item(
+            role_uuid, "accountability", "Monthly reconciliation",
+        )
+        domain = runtime.logic.create_role_item(
+            role_uuid, "domain", "Bank accounts",
+        )
+
+        self.assertEqual(accountability.status, "ok")
+        self.assertEqual(domain.status, "ok")
+        agreement = runtime.session.protocol.index[agreement_uuid]
+        roles = runtime.logic.roles(agreement)
+        self.assertEqual([node.data["name"] for node in roles], ["Treasurer"])
+        self.assertEqual(
+            roles[0].data["purpose"], "Keep the books honest and current",
+        )
+        # Separate nodes, not a list inside the role: two people editing
+        # different accountabilities have to be able to diverge separately.
+        self.assertEqual(
+            [node.data["text"] for node in
+             runtime.logic.accountabilities(roles[0])],
+            ["Monthly reconciliation"],
+        )
+        self.assertEqual(
+            [node.data["text"] for node in runtime.logic.domains(roles[0])],
+            ["Bank accounts"],
+        )
+
+    def test_roles_and_their_items_reorder_within_their_own_type(self):
+        runtime = self.runtime(9481)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        first = runtime.logic.create_role(agreement_uuid, "First").value
+        second = runtime.logic.create_role(agreement_uuid, "Second").value
+        runtime.logic.create_role(agreement_uuid, "Third")
+        alpha = runtime.logic.create_role_item(
+            first, "accountability", "Alpha",
+        ).value
+        runtime.logic.create_role_item(first, "accountability", "Beta")
+        # A domain shares the role with the accountabilities, so an ordering
+        # that was not type-scoped would interleave them.
+        gamma = runtime.logic.create_role_item(first, "domain", "Gamma").value
+        runtime.logic.create_role_item(first, "domain", "Delta")
+
+        def names():
+            agreement = runtime.session.protocol.index[agreement_uuid]
+            return [node.data["name"] for node in runtime.logic.roles(agreement)]
+
+        def texts(reader):
+            role = runtime.session.protocol.index[first]
+            return [node.data["text"] for node in reader(role)]
+
+        self.assertEqual(names(), ["First", "Second", "Third"])
+        self.assertEqual(runtime.logic.move_role(second, 0).status, "ok")
+        self.assertEqual(names(), ["Second", "First", "Third"])
+
+        self.assertEqual(texts(runtime.logic.accountabilities), ["Alpha", "Beta"])
+        self.assertEqual(runtime.logic.move_role_item(alpha, 1).status, "ok")
+        self.assertEqual(texts(runtime.logic.accountabilities), ["Beta", "Alpha"])
+        # Moving an accountability left the domains alone.
+        self.assertEqual(texts(runtime.logic.domains), ["Gamma", "Delta"])
+        self.assertEqual(runtime.logic.move_role_item(gamma, 1).status, "ok")
+        self.assertEqual(texts(runtime.logic.domains), ["Delta", "Gamma"])
+
+    def test_deleting_a_role_takes_its_accountabilities_and_domains(self):
+        runtime = self.runtime(9482)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        role_uuid = runtime.logic.create_role(agreement_uuid, "Treasurer").value
+        item_uuid = runtime.logic.create_role_item(
+            role_uuid, "accountability", "Monthly reconciliation",
+        ).value
+
+        self.assertEqual(runtime.logic.delete_role(role_uuid).status, "ok")
+        # Deleting a container prunes its descendants out of the index rather
+        # than tombstoning each one, as it does for a section's clauses.
+        self.assertNotIn(item_uuid, runtime.session.protocol.index)
+        agreement = runtime.session.protocol.index[agreement_uuid]
+        self.assertEqual(runtime.logic.roles(agreement), [])
+
+    def test_a_purpose_may_be_cleared_but_a_name_may_not(self):
+        runtime = self.runtime(9483)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        role_uuid = runtime.logic.create_role(agreement_uuid, "Treasurer").value
+        runtime.logic.set_role_purpose(role_uuid, "Keep the books")
+
+        self.assertEqual(
+            runtime.logic.set_role_purpose(role_uuid, "").status, "ok",
+        )
+        role = runtime.session.protocol.index[role_uuid]
+        self.assertEqual(role.data["purpose"], "")
+        # The name is what identifies the role, so blanking it is refused.
+        self.assertEqual(
+            runtime.logic.rename_role(role_uuid, "   ").status, "error",
+        )
+        self.assertEqual(
+            runtime.session.protocol.index[role_uuid].data["name"], "Treasurer",
+        )
+
+    def test_role_writes_reject_unknown_kinds_and_wrong_node_types(self):
+        runtime = self.runtime(9484)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        role_uuid = runtime.logic.create_role(agreement_uuid, "Treasurer").value
+        section_uuid = runtime.logic.create_section(agreement_uuid, "Terms").value
+
+        self.assertEqual(
+            runtime.logic.create_role(agreement_uuid, "  ").status, "error",
+        )
+        self.assertEqual(
+            runtime.logic.create_role_item(role_uuid, "budget", "x").status,
+            "error",
+        )
+        # A section is not a role, and a role is not a role item.
+        self.assertEqual(
+            runtime.logic.create_role_item(
+                section_uuid, "accountability", "x",
+            ).status,
+            "error",
+        )
+        self.assertEqual(runtime.logic.delete_role(section_uuid).status, "error")
+        self.assertEqual(
+            runtime.logic.update_role_item(role_uuid, "x").status, "error",
+        )
+
+    def test_editing_a_role_does_not_stale_an_acceptance(self):
+        runtime = self.runtime(9485)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+
+        def status():
+            return next(
+                badge["status"]
+                for badge in runtime.logic.acceptance_badges(agreement_uuid)
+                if badge["is_self"]
+            )
+
+        self.assertEqual(status(), "accepted")
+        role_uuid = runtime.logic.create_role(agreement_uuid, "Treasurer").value
+        runtime.logic.set_role_purpose(role_uuid, "Keep the books")
+        runtime.logic.create_role_item(
+            role_uuid, "accountability", "Monthly reconciliation",
+        )
+        # An acceptance covers the document body plus the roles that
+        # participant holds. Nobody holds one yet, so role edits reach nobody.
+        self.assertEqual(status(), "accepted")
+        # The document body still does.
+        runtime.logic.create_section(agreement_uuid, "Terms")
+        self.assertEqual(status(), "outdated")
+
+    def test_role_writes_obey_the_read_only_guard(self):
+        runtime = self.runtime(9486)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_subagreement(
+            parent_uuid, "Operations",
+        ).value
+        role_uuid = runtime.logic.create_role(child_uuid, "Treasurer").value
+        item_uuid = runtime.logic.create_role_item(
+            role_uuid, "accountability", "Monthly reconciliation",
+        ).value
+        runtime.logic.set_decision(parent_uuid, "refused")
+
+        for result in (
+            runtime.logic.create_role(child_uuid, "Blocked"),
+            runtime.logic.rename_role(role_uuid, "Changed"),
+            runtime.logic.set_role_purpose(role_uuid, "Changed"),
+            runtime.logic.move_role(role_uuid, 0),
+            runtime.logic.delete_role(role_uuid),
+            runtime.logic.create_role_item(role_uuid, "domain", "Blocked"),
+            runtime.logic.update_role_item(item_uuid, "Changed"),
+            runtime.logic.move_role_item(item_uuid, 0),
+            runtime.logic.delete_role_item(item_uuid),
+        ):
+            self.assertEqual(result.status, "error")
+            self.assertIn("Read-only", result.reason)
+
+    def test_role_nodes_are_reactable_and_owned(self):
+        runtime = self.runtime(9487)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        role_uuid = runtime.logic.create_role(agreement_uuid, "Treasurer").value
+        item_uuid = runtime.logic.create_role_item(
+            role_uuid, "domain", "Bank accounts",
+        ).value
+
+        # Reactable, or a divergence on a role would have no way out.
+        for node_type in (
+            "agreement_role", "agreement_accountability", "agreement_domain",
+        ):
+            self.assertIn(node_type, AgreementLogic.REACTABLE)
+            self.assertIn(node_type, AgreementLogic.OWNED_NODE_TYPES)
+        self.assertTrue(runtime.logic.owns_node(role_uuid))
+        self.assertTrue(runtime.logic.owns_node(item_uuid))
+
     @staticmethod
     def relay_config(relay_root: str, identity: str, state_dir: str) -> dict:
         return {

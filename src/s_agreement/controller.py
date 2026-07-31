@@ -97,6 +97,58 @@ def build_routes(logic, runtime) -> list[Route]:
         data = await request.json()
         return await _json_result(runtime, logic.delete_clause(data["clause_uuid"]))
 
+    async def api_create_role(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.create_role(
+            data["agreement_uuid"], data.get("name", ""),
+        ))
+
+    async def api_rename_role(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.rename_role(
+            data["role_uuid"], data.get("name", ""),
+        ))
+
+    async def api_role_purpose(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.set_role_purpose(
+            data["role_uuid"], data.get("purpose", ""),
+        ))
+
+    async def api_delete_role(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.delete_role(data["role_uuid"]))
+
+    async def api_move_role(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.move_role(
+            data["role_uuid"], int(data.get("index", 0)),
+        ))
+
+    async def api_create_role_item(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.create_role_item(
+            data["role_uuid"], data.get("kind", ""), data.get("text", ""),
+        ))
+
+    async def api_update_role_item(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.update_role_item(
+            data["item_uuid"], data.get("text", ""),
+        ))
+
+    async def api_delete_role_item(request: Request):
+        data = await request.json()
+        return await _json_result(
+            runtime, logic.delete_role_item(data["item_uuid"]),
+        )
+
+    async def api_move_role_item(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.move_role_item(
+            data["item_uuid"], int(data.get("index", 0)),
+        ))
+
     async def api_agenda_create(request: Request):
         data = await request.json()
         return await _json_result(runtime, logic.create_agenda_item(
@@ -163,6 +215,35 @@ def build_routes(logic, runtime) -> list[Route]:
         Route("/api/agreement/clauses/create", api_create_clause, methods=["POST"]),
         Route("/api/agreement/clauses/update", api_update_clause, methods=["POST"]),
         Route("/api/agreement/clauses/delete", api_delete_clause, methods=["POST"]),
+        Route("/api/agreement/roles/create", api_create_role, methods=["POST"]),
+        Route("/api/agreement/roles/rename", api_rename_role, methods=["POST"]),
+        Route(
+            "/api/agreement/roles/set_purpose",
+            api_role_purpose,
+            methods=["POST"],
+        ),
+        Route("/api/agreement/roles/delete", api_delete_role, methods=["POST"]),
+        Route("/api/agreement/roles/move", api_move_role, methods=["POST"]),
+        Route(
+            "/api/agreement/roles/items/create",
+            api_create_role_item,
+            methods=["POST"],
+        ),
+        Route(
+            "/api/agreement/roles/items/update",
+            api_update_role_item,
+            methods=["POST"],
+        ),
+        Route(
+            "/api/agreement/roles/items/delete",
+            api_delete_role_item,
+            methods=["POST"],
+        ),
+        Route(
+            "/api/agreement/roles/items/move",
+            api_move_role_item,
+            methods=["POST"],
+        ),
         Route("/api/agreement/agenda/create", api_agenda_create, methods=["POST"]),
         Route("/api/agreement/agenda/delete", api_agenda_delete, methods=["POST"]),
         Route("/api/agreement/agenda/set_priority", api_agenda_priority, methods=["POST"]),

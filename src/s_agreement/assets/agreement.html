@@ -498,7 +498,171 @@
       return null;
     };
 
+    // Accountabilities and domains differ only in what they are called, so
+    // one card renders both columns from this table.
+    const ROLE_ITEM_KINDS = [
+      {
+        kind: 'accountability', type: 'agreement_accountability',
+        label: 'Accountabilities', add: 'New accountability',
+      },
+      {
+        kind: 'domain', type: 'agreement_domain',
+        label: 'Domains', add: 'New domain',
+      },
+    ];
+
+    const renderRoleCard = ({role, proposed, index, count, interactive,
+                             movable}) => {
+      const card = document.createElement('article');
+      card.className = 'role-card';
+      card.classList.toggle('is-proposed', proposed);
+
+      card.append(elementRow({
+        node: role,
+        tag: 'h4',
+        field: 'name',
+        rename: value => api('/api/agreement/roles/rename',
+          {role_uuid: role.uuid, name: value}),
+        proposed,
+        interactive,
+        index,
+        count,
+        onMove: movable ? async newIndex => {
+          try {
+            await api('/api/agreement/roles/move',
+              {role_uuid: role.uuid, index: newIndex});
+            await load();
+          } catch (error) { showToast(error.message, true); }
+        } : null,
+        onDelete: interactive ? async () => {
+          try {
+            await api('/api/agreement/roles/delete', {role_uuid: role.uuid});
+            await load();
+          } catch (error) { showToast(error.message, true); }
+        } : null,
+        deleteTitle: 'Delete this role?',
+        deleteMessage:
+          'Its accountabilities and domains go with it. This cannot be undone.',
+      }));
+
+      // An unset purpose is a genuinely empty element - the prompt is a CSS
+      // pseudo-element, so it can never be committed as the value.
+      const purpose = document.createElement('p');
+      purpose.className = 'role-purpose';
+      purpose.textContent = role.data.purpose || '';
+      if (interactive) {
+        editable(purpose, role.data.purpose || '', value =>
+          api('/api/agreement/roles/set_purpose',
+            {role_uuid: role.uuid, purpose: value}));
+      }
+      card.append(purpose);
+
+      const columns = document.createElement('div');
+      columns.className = 'role-columns';
+      for (const {kind, type, label, add} of ROLE_ITEM_KINDS) {
+        const column = document.createElement('div');
+        column.className = 'role-column';
+        const columnTitle = document.createElement('h5');
+        columnTitle.textContent = label;
+        column.append(columnTitle);
+        const items = displayedChildren(role, type, proposed);
+        const itemsHaveProposals = items.some(entry => entry.proposed);
+        items.forEach(({node: item, proposed: itemProposed}, itemIndex) => {
+          column.append(elementRow({
+            node: item,
+            tag: 'p',
+            field: 'text',
+            rename: value => api('/api/agreement/roles/items/update',
+              {item_uuid: item.uuid, text: value}),
+            proposed: itemProposed,
+            interactive: interactive && !itemProposed,
+            index: itemIndex,
+            count: items.length,
+            onMove: (!interactive || itemProposed || itemsHaveProposals)
+              ? null
+              : async newIndex => {
+                try {
+                  await api('/api/agreement/roles/items/move',
+                    {item_uuid: item.uuid, index: newIndex});
+                  await load();
+                } catch (error) { showToast(error.message, true); }
+              },
+            onDelete: interactive && !itemProposed ? async () => {
+              try {
+                await api('/api/agreement/roles/items/delete',
+                  {item_uuid: item.uuid});
+                await load();
+              } catch (error) { showToast(error.message, true); }
+            } : null,
+            deleteTitle: `Delete this ${kind}?`,
+            deleteMessage: 'This cannot be undone.',
+          }));
+        });
+        if (interactive) {
+          column.append(composer(add, async text => {
+            await api('/api/agreement/roles/items/create',
+              {role_uuid: role.uuid, kind, text});
+          }));
+        }
+        columns.append(column);
+      }
+      card.append(columns);
+      return card;
+    };
+
+    // Roles are content, not administration. They render inside the document
+    // rather than in a side panel, because a role is part of what people
+    // accept - but as cards rather than prose, because they are structured.
+    const renderRoles = (agreement, interactive) => {
+      const section = document.createElement('section');
+      section.className = 'roles';
+      const sectionHeading = document.createElement('div');
+      sectionHeading.className = 'roles-heading';
+      const title = document.createElement('h3');
+      title.textContent = 'Roles';
+      const explanation = document.createElement('p');
+      explanation.textContent =
+        'What this agreement expects, and of whom.';
+      sectionHeading.append(title, explanation);
+      section.append(sectionHeading);
+
+      const roles = displayedChildren(agreement, 'agreement_role');
+      const rolesHaveProposals = roles.some(entry => entry.proposed);
+      roles.forEach(({node: role, proposed}, index) => {
+        section.append(renderRoleCard({
+          role,
+          proposed,
+          index,
+          count: roles.length,
+          interactive: interactive && !proposed,
+          movable: interactive && !proposed && !rolesHaveProposals,
+        }));
+      });
+      if (!roles.length) {
+        const empty = document.createElement('p');
+        empty.className = 'roles-empty';
+        empty.textContent = 'No roles yet.';
+        section.append(empty);
+      }
+      if (interactive) {
+        section.append(composer('New role name', async name => {
+          await api('/api/agreement/roles/create',
+            {agreement_uuid: agreement.uuid, name});
+        }));
+      }
+      return section;
+    };
+
+    // The document is rebuilt wholesale on every poll. That stays - it is
+    // cheap at this size and needs no second render path - but an unchanged
+    // payload should cost nothing. Recorded only once the document is
+    // actually rebuilt, so a render skipped by the edit guard below is
+    // retried on the next poll instead of being lost.
+    let renderedPayloadJson = '';
+
     const render = (payload) => {
+      const encoded = JSON.stringify(payload);
+      if (encoded === renderedPayloadJson) { SovereignShell.refresh(); return; }
       payloadState = payload;
       current = payload.agreement;
       currentInteractionAllowed = Boolean(payload.interaction?.allowed);
@@ -530,6 +694,7 @@
         SovereignShell.refresh();
         return;
       }
+      renderedPayloadJson = encoded;
       article.replaceChildren();
       article.classList.toggle('is-readonly', !currentInteractionAllowed);
       if (!current) { SovereignShell.refresh(); return; }
@@ -709,6 +874,7 @@
         });
         article.append(block);
       });
+      article.append(renderRoles(current, currentInteractionAllowed));
       SovereignShell.refresh();
     };
 

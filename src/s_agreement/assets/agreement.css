@@ -380,7 +380,65 @@ h2.element-label { margin: 0 0 4px; }
 .editable:hover { background: var(--hover); }
 .editable:focus { outline: 2px solid var(--proposal); outline-offset: 1px; background: var(--hover); }
 
+/* Roles live in the document below the prose. Cards rather than paragraphs,
+   because they are structured - but on the article's own surface, because
+   they are still part of what is being accepted, not an admin panel bolted
+   to the side. --hover is a translucent overlay, so one card style lifts off
+   --panel in both themes. */
+.roles { margin: 18px 0 10px; padding: 14px 4px 12px; }
+.roles-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin: 0 4px 6px 22px;
+}
+.roles-heading h3 { margin: 0; font-size: 14px; }
+.roles-heading p { margin: 0; color: var(--text-muted); font-size: 12px; }
+.roles-empty {
+  margin: 6px 4px 8px 22px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.role-card {
+  margin: 8px 4px 10px 22px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--hover);
+}
+.role-card.is-proposed {
+  border: 1px dashed rgba(37, 99, 235, 0.55);
+  background: rgba(37, 99, 235, 0.12);
+}
+.role-card .element-label { margin: 2px 0; font-size: 14px; }
+.role-purpose {
+  margin: 2px 0 10px 22px;
+  color: var(--text-muted);
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The prompt is a pseudo-element, so an unset purpose stays genuinely empty
+   and the prompt can never be committed as the value. */
+.role-purpose:empty::before { content: 'Add a purpose'; opacity: 0.6; }
+.role-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-left: 22px;
+}
+.role-column h5 {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.role-column .element-label { margin: 3px 0; font-size: 13px; }
+
 @media (max-width: 780px) {
+  .role-columns { grid-template-columns: 1fr; }
   main { grid-template-columns: 1fr; padding: 12px; }
   #organization { position: static; }
   article { padding: 24px 20px; }

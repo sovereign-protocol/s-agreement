@@ -34,6 +34,15 @@ class AgreementFacade:
     ) -> list[ProtocolNode]:
         return self._logic.subagreement_links(agreement)
 
+    def roles(self, agreement: ProtocolNode) -> list[ProtocolNode]:
+        return self._logic.roles(agreement)
+
+    def accountabilities(self, role: ProtocolNode) -> list[ProtocolNode]:
+        return self._logic.accountabilities(role)
+
+    def domains(self, role: ProtocolNode) -> list[ProtocolNode]:
+        return self._logic.domains(role)
+
     def organization(self) -> dict:
         return self._logic.organization_payload()
 

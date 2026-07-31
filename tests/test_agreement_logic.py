@@ -1722,6 +1722,166 @@ class AgreementLogicTests(unittest.TestCase):
         self.assertTrue(runtime.logic.owns_node(role_uuid))
         self.assertTrue(runtime.logic.owns_node(item_uuid))
 
+    # Templates (2.8). A count of actors, so there is no flag to assert on -
+    # only who is in it.
+    def test_copy_carries_the_text_and_none_of_the_taking_part(self):
+        runtime = self.runtime(9490)
+        source_uuid = runtime.logic.create_agreement("Cooperative").value
+        section_uuid = runtime.logic.create_section(source_uuid, "Terms").value
+        runtime.logic.create_clause(section_uuid, "Members meet monthly.")
+        role_uuid = runtime.logic.create_role(source_uuid, "Treasurer").value
+        runtime.logic.create_role_item(role_uuid, "accountability", "Books")
+        runtime.logic.create_role_item(role_uuid, "domain", "Bank accounts")
+
+        copy_uuid = runtime.logic.clone_agreement(source_uuid).value
+        copy = runtime.session.protocol.index[copy_uuid]
+
+        self.assertEqual(copy.data["title"], "Cooperative (template)")
+        self.assertEqual(
+            [node.data["title"] for node in runtime.logic.sections(copy)],
+            ["Terms"],
+        )
+        copied_section = runtime.logic.sections(copy)[0]
+        self.assertEqual(
+            [node.data["text"] for node in runtime.logic.clauses(copied_section)],
+            ["Members meet monthly."],
+        )
+        # The default Participant travels as content, because it is content.
+        copied_roles = runtime.logic.roles(copy)
+        self.assertEqual(
+            [node.data["name"] for node in copied_roles],
+            ["Participant", "Treasurer"],
+        )
+        treasurer = copied_roles[1]
+        self.assertEqual(
+            [node.data["text"] for node in runtime.logic.accountabilities(treasurer)],
+            ["Books"],
+        )
+        self.assertEqual(
+            [node.data["text"] for node in runtime.logic.domains(treasurer)],
+            ["Bank accounts"],
+        )
+        # Fresh uuids, or an answer given in the original would count here:
+        # acceptance is looked up by role uuid.
+        self.assertNotEqual(treasurer.uuid, role_uuid)
+        self.assertNotIn(copied_section.uuid, {section_uuid})
+        # Nobody is in it: no Identity, no offers, no answers, no seats.
+        self.assertEqual(runtime.logic.identity_holder(copy), "")
+        self.assertEqual(runtime.logic.parent_holdings(copy), [])
+        for role in copied_roles:
+            self.assertEqual(runtime.logic.role_holders(copy, role), [])
+        self.assertEqual(runtime.logic.actor_uuids(copy), set())
+
+    def test_state_counts_actors_from_template_to_working(self):
+        host = self.runtime(9491)
+        guest = self.runtime(9492)
+        source_uuid = host.logic.create_agreement("Cooperative").value
+        copy_uuid = host.logic.clone_agreement(source_uuid).value
+        copy = host.session.protocol.index[copy_uuid]
+
+        # Nobody in it at all.
+        self.assertEqual(host.logic.agreement_state(copy), "template")
+        # Identity is a role, so holding it alone makes one actor.
+        host.logic.take_identity(copy_uuid)
+        copy = host.session.protocol.index[copy_uuid]
+        self.assertEqual(host.logic.agreement_state(copy), "instantiated")
+        # Accepting a role you already hold Identity in adds no second actor.
+        role = host.logic.roles(copy)[0]
+        host.logic.decide_role(role.uuid, "accepted")
+        copy = host.session.protocol.index[copy_uuid]
+        self.assertEqual(host.logic.agreement_state(copy), "instantiated")
+
+        connect(host, guest, copy_uuid)
+        guest_copy = guest.session.protocol.index[copy_uuid]
+        guest.logic.accept_agreement_invitation(guest_copy)
+        host.logic.offer_role(role.uuid, guest.session.identity.uuid)
+        sync(host, guest)
+        guest.logic.decide_role(role.uuid, "accepted")
+        sync(host, guest)
+
+        copy = host.session.protocol.index[copy_uuid]
+        self.assertEqual(host.logic.agreement_state(copy), "working")
+
+    def test_asking_for_a_role_does_not_make_you_an_actor(self):
+        host = self.runtime(9493)
+        guest = self.runtime(9494)
+        agreement_uuid = host.logic.create_agreement("Cooperative").value
+        connect(host, guest, agreement_uuid)
+        guest.logic.accept_agreement_invitation(
+            guest.session.protocol.index[agreement_uuid],
+        )
+        role = host.logic.roles(
+            host.session.protocol.index[agreement_uuid],
+        )[0]
+
+        # An answer with no offer behind it is a request, not a holding.
+        guest.logic.decide_role(role.uuid, "accepted")
+        sync(host, guest)
+        agreement = host.session.protocol.index[agreement_uuid]
+        self.assertEqual(
+            {
+                holder["status"] for holder in
+                host.logic.role_holders(agreement, role)
+                if not holder["is_self"]
+            },
+            {"requested"},
+        )
+        self.assertEqual(host.logic.agreement_state(agreement), "instantiated")
+
+    def test_a_template_can_be_written_but_not_offered(self):
+        runtime = self.runtime(9495)
+        source_uuid = runtime.logic.create_agreement("Cooperative").value
+        copy_uuid = runtime.logic.clone_agreement(source_uuid).value
+        role = runtime.logic.roles(
+            runtime.session.protocol.index[copy_uuid],
+        )[0]
+
+        # A template is for editing, so its text is not read-only.
+        self.assertEqual(
+            runtime.logic.create_section(copy_uuid, "Terms").status, "ok",
+        )
+        self.assertEqual(
+            runtime.logic.create_role(copy_uuid, "Treasurer").status, "ok",
+        )
+        # But nobody speaks for it, so it cannot seat anyone.
+        offered = runtime.logic.offer_role(
+            role.uuid, runtime.session.identity.uuid,
+        )
+        self.assertEqual(offered.status, "error")
+        self.assertIn("Identity", offered.reason)
+
+    def test_state_reaches_both_payloads(self):
+        runtime = self.runtime(9496)
+        source_uuid = runtime.logic.create_agreement("Cooperative").value
+        copy_uuid = runtime.logic.clone_agreement(source_uuid).value
+
+        payload = runtime.logic.document_payload(copy_uuid)
+        states = {
+            item["uuid"]: item.get("state")
+            for item in payload["organization"]["roots"]
+        }
+
+        self.assertEqual(payload["state"], "template")
+        self.assertEqual(states[copy_uuid], "template")
+        self.assertEqual(states[source_uuid], "instantiated")
+
+    def test_copying_needs_no_standing_in_the_original(self):
+        runtime = self.runtime(9497)
+        source_uuid = runtime.logic.create_agreement("Cooperative").value
+        runtime.logic.create_section(source_uuid, "Terms")
+        self.leave(runtime, source_uuid)
+
+        copied = runtime.logic.clone_agreement(source_uuid, "Reused")
+
+        self.assertEqual(copied.status, "ok")
+        copy = runtime.session.protocol.index[copied.value]
+        self.assertEqual(copy.data["title"], "Reused")
+        self.assertEqual(
+            [node.data["title"] for node in runtime.logic.sections(copy)],
+            ["Terms"],
+        )
+        self.assertEqual(runtime.logic.clone_agreement("missing").status, "error")
+
     # Being part of an agreement is holding a role in it, so these stand
     # where an agreement-level accept or refuse used to.
     def leave(self, runtime, agreement_uuid):

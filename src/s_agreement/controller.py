@@ -29,6 +29,12 @@ def build_routes(logic, runtime) -> list[Route]:
             data["parent_agreement_uuid"], data.get("title", ""),
         ))
 
+    async def api_clone_agreement(request: Request):
+        data = await request.json()
+        return await _json_result(runtime, logic.clone_agreement(
+            data["agreement_uuid"], data.get("title"),
+        ))
+
     async def api_select_agreement(request: Request):
         data = await request.json()
         return await _json_result(runtime, logic.select_agreement(data["agreement_uuid"]))
@@ -251,6 +257,11 @@ def build_routes(logic, runtime) -> list[Route]:
         Route(
             "/api/agreement/agreements/create_subagreement",
             api_create_subagreement,
+            methods=["POST"],
+        ),
+        Route(
+            "/api/agreement/agreements/clone",
+            api_clone_agreement,
             methods=["POST"],
         ),
         Route("/api/agreement/agreements/select", api_select_agreement, methods=["POST"]),

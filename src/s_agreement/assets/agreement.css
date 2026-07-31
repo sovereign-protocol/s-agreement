@@ -543,3 +543,47 @@ h2.element-label { margin: 0 0 4px; }
   cursor: pointer;
 }
 .content.is-collapsed > *:not(.content-toggle) { display: none; }
+
+/* Template or working is how many actors are in it, so this reports rather
+   than offers: the badge is not a control and there is nothing to switch.
+   A working agreement is unbadged, being the ordinary case. */
+.agreement-state {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 4px 4px 22px;
+  font-size: 12px;
+}
+.state-badge {
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px dashed var(--line);
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.state-badge[data-state="template"] { border-style: dashed; }
+.state-badge[data-state="instantiated"] {
+  border-style: solid;
+  color: #f59e0b;
+  border-color: #f59e0b;
+}
+.state-note { color: var(--text-muted); }
+/* In the tree the row is a name and a count, so an extra fact takes its own
+   line underneath - the same shape as the other markers there. */
+.organization-row .state-badge {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+/* Pushed away from the note: copying is the one action on this line, and it
+   makes a new agreement rather than changing this one. */
+.state-duplicate {
+  margin-left: auto;
+  padding: 3px 9px;
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+}

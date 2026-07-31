@@ -327,6 +327,20 @@
           ? `${(item.members || []).length} ${(item.members || []).length === 1 ? 'person' : 'people'}`
           : 'Not joined';
         row.append(button, count);
+        // An agreement nobody is in reads as a tree row like any other, and
+        // would otherwise be indistinguishable from one people rely on. Only
+        // that case is marked here: one actor is the ordinary state of
+        // anything you have just made, so badging it in a tree of your own
+        // agreements marks every row and distinguishes nothing. It stays on
+        // the agreement's own page, where it is about that agreement.
+        if (item.state === 'template') {
+          const state = document.createElement('span');
+          state.className = 'state-badge';
+          state.dataset.state = item.state;
+          state.textContent = STATE_BADGE[item.state].label;
+          state.title = STATE_BADGE[item.state].title;
+          row.append(state);
+        }
         // The tree is drawn through home, so any other seat this agreement
         // holds would otherwise be invisible - and an unseen second parent
         // is a trap for whoever deletes the first.
@@ -642,6 +656,59 @@
     // Which agreements this one holds a seat in, in the order that decides
     // where it is drawn. Home is the first that works, so reordering is how
     // you say where it belongs - there is no home to set, only a preference.
+    // Template, instantiated or working is a count of actors, not a kind of
+    // agreement, so this line reports a situation rather than a setting -
+    // there is nothing here to switch. A working agreement says nothing,
+    // being the ordinary case.
+    const STATE_BADGE = {
+      template: {
+        label: 'Template',
+        title: 'Nobody holds a role here.',
+        note: 'Nobody holds a role here yet. Take Identity to start using it.',
+      },
+      instantiated: {
+        label: 'One actor',
+        title: 'Only one actor holds a role here.',
+        note: 'Only one actor holds a role here, so nothing is agreed'
+          + ' between anybody yet.',
+      },
+    };
+
+    const renderState = (state) => {
+      const line = document.createElement('p');
+      line.className = 'agreement-state';
+      const badge = STATE_BADGE[state];
+      if (badge) {
+        const chip = document.createElement('span');
+        chip.className = 'state-badge';
+        chip.dataset.state = state;
+        chip.textContent = badge.label;
+        chip.title = badge.title;
+        const note = document.createElement('span');
+        note.className = 'state-note';
+        note.textContent = badge.note;
+        line.append(chip, note);
+      }
+      // Copying reads this agreement and writes a new one of your own, so it
+      // stays available even where nothing here can be touched.
+      const duplicate = document.createElement('button');
+      duplicate.type = 'button';
+      duplicate.className = 'state-duplicate';
+      duplicate.textContent = 'Duplicate as template';
+      duplicate.title =
+        'Copy the text and roles into a new agreement with nobody in it';
+      duplicate.onclick = async () => {
+        try {
+          const result = await api('/api/agreement/agreements/clone',
+            {agreement_uuid: current.uuid});
+          await selectAgreement(result.value);
+          showToast('Copied into a template');
+        } catch (error) { showToast(error.message, true); }
+      };
+      line.append(duplicate);
+      return line;
+    };
+
     const renderSeats = (parents, interactive) => {
       const seats = parents || [];
       const section = document.createElement('section');
@@ -1101,6 +1168,7 @@
         );
         article.append(notice);
       }
+      article.append(renderState(payload.state));
       // Identity normally reads as a badge on whoever holds it, so the
       // line only appears when it needs attention: contested, recorded
       // twice, vacant, or held by somebody else and therefore takeable.

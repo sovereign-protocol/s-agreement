@@ -7,7 +7,9 @@ rules that follow from it, and the order the work is built in.
 Status tags follow the Core convention: **[DONE]** built and tested,
 **[PROPOSED]** decided here but not built, **[OPEN]** unresolved.
 
-Everything below is **[PROPOSED]** unless marked otherwise.
+Every step of §3 is now **[DONE]**, so the model in §1–2 describes what is
+built rather than what is planned. What remains unbuilt is tagged **[OPEN]**
+in §5.
 
 ## 1. Model
 
@@ -310,9 +312,15 @@ structure with fresh uuids, zero decisions", which lands at 0 actors by
 construction. Role uuids must be regenerated too — acceptance lookup is
 uuid-keyed.
 
-A 0-actor agreement is **inert**: no actors means no Identity, so it cannot
-accept, resign, or act. Its holdings can only be removed from the parent side,
-by ordinary revocation (§2.3). That is a derived property, not a rule.
+A 0-actor agreement is **inert as an actor**: no actors means no Identity, so
+it cannot offer, accept, resign, or take a seat. Its holdings can only be
+removed from the parent side, by ordinary revocation (§2.3). That is a derived
+property, not a rule.
+
+Its *text* is a different matter and stays writable, which falls out of the
+same guards: a template holds no seats, so `_interaction_guard` finds no
+ancestry to fault. That is the behaviour you want — editing is what a template
+is for — and it needed no exception to get.
 
 Taking Identity in a 0-actor template is the same write as anywhere else,
 with nobody to diverge against.
@@ -445,10 +453,38 @@ The graph step. Highest risk — schedule it alone.
 derived home, annotates the other, survives invalidation of either parent
 independently, and falls back in order when home goes invalid.
 
-### Step 4 — Templates
+### Step 4 — Templates **[DONE]**
 
-Clone with fresh uuids and zero decisions; template / instantiated / working
-state badges. Mostly falls out of §2.8.
+`clone_agreement` copies the text and the roles into a new agreement with
+fresh uuids and nobody in it; `agreement_state` counts actors and returns
+template / instantiated / working; both payloads carry it and the view badges
+the first two.
+
+The parts worth recording:
+
+- **Nothing is stripped.** The copy walks `CLONED_TYPES` — sections, clauses,
+  roles, accountabilities, domains — and simply never visits Identity, offers,
+  answers or holdings. A clone-then-strip pass would have had to know the same
+  list inverted, and would have been a second place to forget a node type when
+  one is added.
+- **The default Participant travels**, because it is content. A template that
+  arrived with no role at all would make its first user invent one before
+  taking part, which is the thing §2.8 says a template should spare them.
+- **Copying is not gated on standing in the original.** It reads that
+  agreement and writes only a new one of this session's own, so an agreement
+  you can see read-only is one you can fork. That is a feature, not a leak:
+  you could already read it.
+- **State is derived from `role_holders`, not from a second reading of the
+  same facts.** Writing a leaner actor scan would have put "what counts as
+  accepted" in two places. Making `role_holders` memoized per read scope
+  instead made the shared path cheap enough that the org payload can ask it
+  for every agreement, which is what makes the badge affordable at all: the
+  added work costs about **1 %** of a build, measured before and after on one
+  fixture (not comparable to the absolute figure in §5, which was taken on a
+  smaller one).
+- **A request is not an actor.** An answer with no offer behind it is somebody
+  asking to join (§2.4b), so it leaves the count where it was — which is what
+  keeps a template from being promoted by a stranger.
 
 ## 4. UI
 
@@ -588,9 +624,21 @@ home. Additions:
 
 - an agreement with extra holdings shows an `also in: Foundation` marker
 - a row whose home fell back shows `home via Foundation` subtly
-- template / instantiated badges from §2.8
+- a template badge from §2.8, on its own line under the row, the same shape
+  the tree already uses for its other extra facts. **Only** the template
+  case: instantiated was badged here first and marked every row in a solo
+  user's tree, which distinguishes nothing — one actor is the ordinary state
+  of anything you have just made. It stays on the agreement's own page, where
+  it is about that agreement rather than about all of them
 - the ordered parent list, with reorder, lives on the agreement's own page —
   not in the tree
+
+The agreement's own page carries the same badge on a state line under the
+title, with a sentence saying what the count means and the *Duplicate as
+template* action. The badge is not a control: there is no mode to switch,
+only a situation to report. Duplicate sits on that line because it is the one
+thing you can do about the state, and it stays available on a read-only
+agreement, since it writes only a new agreement of your own.
 
 ### 4.7 Creating a sub-agreement becomes filling a seat
 
@@ -659,6 +707,6 @@ cannot live outside the DOM.
   sub-agreement, so the seat survives personnel change). Deliberately deferred
   — `actor_ref` is a discriminated union so this stays additive.
 - **[DONE]** How a newly invited person gets their first role — resolved in
-  §2.5 below. Retiring `agreement_decision` is now unblocked but not done:
-  role holdings still run alongside it, and `_interaction_guard` still reads
-  the old record.
+  §2.4b: a request is a decision with no offer, so it needed no new node type.
+  `agreement_decision` is retired with it; `_interaction_guard` now reads role
+  holdings and nothing else.

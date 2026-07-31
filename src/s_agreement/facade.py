@@ -120,6 +120,15 @@ class AgreementFacade:
     def create_subagreement(self, parent_agreement_uuid: str, title: str):
         return self._logic.create_subagreement(parent_agreement_uuid, title)
 
+    def clone_agreement(self, agreement_uuid: str, title: str | None = None):
+        return self._logic.clone_agreement(agreement_uuid, title)
+
+    def actor_uuids(self, agreement: ProtocolNode) -> set[str]:
+        return self._logic.actor_uuids(agreement)
+
+    def agreement_state(self, agreement: ProtocolNode) -> str:
+        return self._logic.agreement_state(agreement)
+
     def delete_agreement(self, agreement_uuid: str):
         return self._logic.delete_agreement(agreement_uuid)
 

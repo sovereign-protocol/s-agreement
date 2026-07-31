@@ -279,6 +279,76 @@ class AgreementLogic:
             ],
         )
 
+    # What a copy carries. Everything an agreement holds beyond this is
+    # somebody's record of taking part in it - Identity, offers, answers, the
+    # seats it holds elsewhere - and copying the text is not copying who
+    # agreed to it.
+    CLONED_TYPES = frozenset({
+        "agreement_section", "agreement_clause",
+        "agreement_role", "agreement_accountability", "agreement_domain",
+    })
+
+    def clone_agreement(
+        self, agreement_uuid: str, title: str | None = None,
+    ) -> SessionResult:
+        """Copy an agreement's text and structure, with nobody in it.
+
+        Fresh uuids throughout, because acceptance is uuid-keyed: a copy that
+        shared role uuids with its original would let an answer given there
+        count here. Nothing is stripped afterwards - the records of taking
+        part are simply never copied - so the copy lands at zero actors,
+        which is what a template is (2.8). No Identity and no default
+        Participant either: taking Identity is how somebody starts using it.
+
+        Not gated on holding a role in the source. Copying reads that
+        agreement and writes only a new one of this session's own, so an
+        agreement you can see read-only is one you can fork into a template.
+        """
+        source = self._node(agreement_uuid, "agreement")
+        if not source:
+            return SessionResult("error", reason="agreement not found")
+        normalized = str(title or "").strip() or (
+            f"{source.data.get('title') or 'Untitled agreement'} (template)"
+        )
+        created = self.session.create_child(
+            self._agreement_container().uuid,
+            {"type": "agreement", "title": normalized},
+            {},
+        )
+        if created.status != "ok":
+            return created
+        copied = self._copy_content(source, created.value.uuid)
+        if copied.status != "ok":
+            self.session.delete(created.value.uuid)
+            return copied
+        self._remember_agreement(created.value.uuid)
+        return SessionResult(
+            "ok",
+            value=created.value.uuid,
+            effects=[*created.effects, *copied.effects],
+        )
+
+    def _copy_content(
+        self, source: ProtocolNode, target_uuid: str,
+    ) -> SessionResult:
+        """Recreate a node's copyable children under a new parent."""
+        effects = []
+        for child in source.live_children():
+            if child.data.get("type") not in self.CLONED_TYPES:
+                continue
+            # Order rides along in the data, so the children can be walked in
+            # any order and still come out arranged as they were.
+            created = self.session.create_child(
+                target_uuid, dict(child.data), dict(child.weights),
+            )
+            if created.status != "ok":
+                return created
+            copied = self._copy_content(child, created.value.uuid)
+            if copied.status != "ok":
+                return copied
+            effects.extend([*created.effects, *copied.effects])
+        return SessionResult("ok", effects=effects)
+
     def select_agreement(self, agreement_uuid: str) -> SessionResult:
         agreement = self._node(agreement_uuid, "agreement")
         if not agreement:
@@ -1281,6 +1351,14 @@ class AgreementLogic:
         is "they have not answered", the other is "I cannot see whether they
         have".
         """
+        return self._cached(
+            ("holders", agreement.uuid, role.uuid),
+            lambda: self._build_role_holders(agreement, role),
+        )
+
+    def _build_role_holders(
+        self, agreement: ProtocolNode, role: ProtocolNode,
+    ) -> list[dict]:
         people = {
             member["uuid"]: member
             for member in self._topic_members(agreement.uuid)
@@ -1638,6 +1716,9 @@ class AgreementLogic:
             "holds_identity": (
                 self.holds_identity(selected) if selected else False
             ),
+            # Template, instantiated or working - a count of actors, not a
+            # kind of node (2.8).
+            "state": self.agreement_state(selected) if selected else "",
             "offerable_actors": (
                 self.offerable_actors(selected) if selected else []
             ),
@@ -1908,6 +1989,34 @@ class AgreementLogic:
                 item["is_observer"], not item["is_self"], item["name"],
             ),
         )
+
+    # How many actors are in it is the whole of what distinguishes a template
+    # from a working agreement (2.8). No flag, no separate node type, no mode
+    # to switch: a template becomes real by being joined and goes back to
+    # being one by being left.
+    def actor_uuids(self, agreement: ProtocolNode) -> set[str]:
+        """Every actor currently holding something here.
+
+        Identity counts, because holding Identity is holding a role. A
+        request does not: an answer with no offer behind it is somebody
+        asking to be in, which is not the same as being in.
+        """
+        actors = set()
+        if holder := self.identity_holder(agreement):
+            actors.add(holder)
+        for role in self.roles(agreement):
+            actors.update(
+                holder["actor_uuid"]
+                for holder in self.role_holders(agreement, role)
+                if holder["status"] == "accepted"
+            )
+        return actors
+
+    def agreement_state(self, agreement: ProtocolNode) -> str:
+        count = len(self.actor_uuids(agreement))
+        if not count:
+            return "template"
+        return "instantiated" if count == 1 else "working"
 
     def role_reference_hash(
         self, agreement: ProtocolNode, role: ProtocolNode,
@@ -2248,6 +2357,7 @@ class AgreementLogic:
                 "uuid": agreement.uuid,
                 "title": agreement.data.get("title") or "Untitled agreement",
                 "joined": True,
+                "state": self.agreement_state(agreement),
                 "interaction_allowed": (
                     self._interaction_guard(agreement).status == "ok"
                 ),
@@ -2287,6 +2397,8 @@ class AgreementLogic:
                     "uuid": child_uuid,
                     "title": role.data.get("name") or "Restricted subagreement",
                     "joined": False,
+                    # Whose seat this is, is all that is visible from here.
+                    "state": "",
                     "interaction_allowed": False,
                     "home_parent_uuid": parent.uuid,
                     "other_parents": [],

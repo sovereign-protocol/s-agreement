@@ -864,11 +864,14 @@ class AgreementLogicTests(unittest.TestCase):
         )
         role = left.session.protocol.index[role_uuid]
         self.assertEqual(left.logic.role_offers(role), [])
-        # Their decision is theirs. It survives, pointing at nothing, inert.
+        # Their decision is theirs. It survives, pointing at nothing.
         theirs = right.session.protocol.index[role_uuid]
         self.assertTrue(right.logic._own_role_decision(theirs))
-        # And with the offer gone, nobody holds the role any more.
-        self.assertEqual(left.logic.role_holders(agreement, role), [])
+        # The role is no longer held. The leftover answer reads as
+        # revoked rather than as a fresh request, or the Identity holder
+        # would be asked to re-offer what they had just withdrawn.
+        remaining = left.logic.role_holders(agreement, role)
+        self.assertEqual([item["status"] for item in remaining], ["revoked"])
 
     def test_resigning_removes_only_the_participants_own_record(self):
         runtime = self.runtime(9500)
@@ -886,7 +889,7 @@ class AgreementLogicTests(unittest.TestCase):
             runtime.logic.role_holders(agreement, role)[0]["status"], "pending",
         )
 
-    def test_only_the_identity_holder_offers_and_a_decision_needs_an_offer(self):
+    def test_only_identity_offers_but_anyone_may_ask_for_a_role(self):
         left, right = self.runtime(9501), self.runtime(9502)
         agreement_uuid = left.logic.create_agreement("Charter").value
         role_uuid = left.logic.create_role(agreement_uuid, "Treasurer").value
@@ -905,10 +908,106 @@ class AgreementLogicTests(unittest.TestCase):
             ).status,
             "error",
         )
-        # Nobody accepts a role they were never offered.
-        undecidable = right.logic.decide_role(role_uuid, "accepted")
-        self.assertEqual(undecidable.status, "error")
-        self.assertIn("not been offered", undecidable.reason)
+        # Answering without an offer is not refused - it is how somebody
+        # who holds nothing asks for their first role, since only the
+        # Identity holder can offer and a newcomer cannot reach them
+        # any other way.
+        asked = right.logic.decide_role(role_uuid, "accepted")
+        self.assertEqual(asked.status, "ok")
+        role = right.session.protocol.index[role_uuid]
+        agreement = right.session.protocol.index[agreement_uuid]
+        requested = right.logic.role_holders(agreement, role)
+        self.assertEqual(
+            [item["status"] for item in requested], ["requested"],
+        )
+
+    def test_a_newcomer_asks_and_the_identity_holder_confirms(self):
+        # How somebody who holds nothing gets their first role. Only the
+        # Identity holder can offer, so a joiner cannot be let in by anyone
+        # else; asking is the move available to them, and confirming is the
+        # move available to Identity. Neither side writes the other's record.
+        left, right = self.runtime(9509), self.runtime(9510)
+        agreement_uuid = left.logic.create_agreement("Charter").value
+        agreement = left.session.protocol.index[agreement_uuid]
+        connect(left, right, agreement_uuid)
+        right.logic.accept_agreement_invitation(
+            right.session.protocol.index[agreement_uuid],
+        )
+        sync(left, right)
+        participant_uuid = right.logic.roles(
+            right.session.protocol.index[agreement_uuid],
+        )[0].uuid
+
+        # Joined, but holding nothing yet.
+        role = left.session.protocol.index[participant_uuid]
+        self.assertEqual(
+            [holder["is_self"]
+             for holder in left.logic.role_holders(agreement, role)],
+            [True],
+        )
+
+        self.assertEqual(
+            right.logic.decide_role(participant_uuid, "accepted").status, "ok",
+        )
+        sync(left, right)
+
+        def theirs():
+            role = left.session.protocol.index[participant_uuid]
+            return next(
+                holder for holder in left.logic.role_holders(agreement, role)
+                if not holder["is_self"]
+            )
+
+        self.assertEqual(theirs()["status"], "requested")
+        # Confirming is an ordinary offer. Their answer is already recorded,
+        # so the holding goes live the moment both records exist - the
+        # newcomer does not have to answer a second time.
+        self.assertEqual(
+            left.logic.offer_role(
+                participant_uuid, right.session.identity.uuid,
+            ).status,
+            "ok",
+        )
+        sync(left, right)
+        self.assertEqual(theirs()["status"], "accepted")
+
+    def test_revoking_a_confirmed_request_does_not_read_as_a_fresh_request(self):
+        # The reason a revoked offer is marked rather than deleted. Asking,
+        # being confirmed, then being revoked leaves the asker's answer in
+        # place; if the withdrawal left no trace, that answer would read as
+        # somebody asking again and the Identity holder would be prompted to
+        # re-offer exactly what they had just taken back.
+        runtime = self.runtime(9511)
+        agreement_uuid = runtime.logic.create_agreement("Charter").value
+        role_uuid = runtime.logic.create_role(agreement_uuid, "Treasurer").value
+        mine = runtime.session.identity.uuid
+
+        def statuses():
+            agreement = runtime.session.protocol.index[agreement_uuid]
+            role = runtime.session.protocol.index[role_uuid]
+            return [
+                holder["status"]
+                for holder in runtime.logic.role_holders(agreement, role)
+            ]
+
+        runtime.logic.decide_role(role_uuid, "accepted")
+        self.assertEqual(statuses(), ["requested"])
+        runtime.logic.offer_role(role_uuid, mine)
+        self.assertEqual(statuses(), ["accepted"])
+        runtime.logic.revoke_role_offer(role_uuid, mine)
+        self.assertEqual(statuses(), ["revoked"])
+
+        # Offering again revives the same record rather than laying a second
+        # one beside it, and the answer already on file still counts.
+        runtime.logic.offer_role(role_uuid, mine)
+        self.assertEqual(statuses(), ["accepted"])
+        role = runtime.session.protocol.index[role_uuid]
+        self.assertEqual(len(runtime.logic._all_role_offers(role)), 1)
+
+        # Once the person clears their own answer, nothing lingers on show.
+        runtime.logic.revoke_role_offer(role_uuid, mine)
+        runtime.logic.resign_role(role_uuid)
+        self.assertEqual(statuses(), [])
 
     def test_an_offer_from_someone_who_is_not_identity_is_not_adopted(self):
         # The affordance keeps an honest client from making such an offer;

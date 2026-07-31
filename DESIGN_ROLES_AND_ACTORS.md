@@ -140,9 +140,25 @@ divergence) is enough.
 > **You may withdraw what you authored. You may never delete what someone
 > else wrote.**
 
-- Identity authored the offer → Identity may delete it. That is **revocation**.
+- Identity authored the offer → Identity may withdraw it. That is
+  **revocation**.
 - The actor authored the decision → the actor may delete it. That is
   **resignation**.
+
+**[DONE]** Revocation *marks* the offer `revoked_at` rather than deleting it.
+Deleting was the original design and is wrong: with §2.5's request mechanism,
+an answer with no offer beside it means somebody asking for the role, so a
+deleted offer would leave the actor's surviving answer reading as a fresh
+request — and the Identity holder would immediately be prompted to re-offer
+exactly what they had just taken back, making revocation useless. Marking is
+still a withdrawal of what Identity itself wrote, so the rule holds; it just
+keeps the fact that an offer existed. Offering again revives the same record.
+A withdrawn offer with no answer left beside it is not shown at all.
+
+This was caught in the running application, not by the tests: the first fix
+recorded on the *actor's* node whether it was answering an offer, which is
+correct at the moment it is written and wrong forever after, because
+confirmation changes the situation and cannot rewrite somebody else's node.
 
 A holding is live only when both nodes are present, so neither party needs
 the other's consent and neither can rewrite the other's record. Mechanically
@@ -190,6 +206,27 @@ re-accepted — a latent bug independent of this work.
 A path counts as valid only if every agreement on it is joined locally, which
 is already what the current guard means by *"Read-only until every parent
 agreement is joined."* No separate clause needed.
+
+### 2.4b A request is a decision with no offer
+
+**[DONE]** Only Identity may offer (§2.1), so somebody who has just accepted
+a topic invitation holds nothing and cannot be let in by anyone else. Asking
+is the move available to them; confirming is the move available to Identity.
+
+This needs **no new node type**. A holding is live only while both records
+exist, so the two halves already mean something on their own:
+
+| Offer | Decision | Meaning |
+|---|---|---|
+| yes | no | an unfilled seat — *pending* |
+| no | yes | somebody asking — *requested* |
+| yes | yes | held |
+| revoked | yes | withdrawn — *revoked* (§2.3) |
+
+Confirming a request is an ordinary `offer_role`. The asker's answer is
+already on file, so the holding goes live the moment both records exist and
+the newcomer is never asked to answer twice. Neither side writes the other's
+record at any point, so §2.3 is untouched.
 
 ### 2.5 Home — derived, not declared
 
@@ -525,19 +562,7 @@ cannot live outside the DOM.
 - **[OPEN]** Role as a third Actor kind (a role holding a seat in a
   sub-agreement, so the seat survives personnel change). Deliberately deferred
   — `actor_ref` is a discriminated union so this stays additive.
-- **[OPEN] How does a newly invited person get their first role?** Offers
-  come only from Identity (§2.1), so somebody who accepts a topic invitation
-  holds nothing and can do nothing until the Identity holder offers them
-  Participant. That is faithful to "taking a role is the only way to be part
-  of an agreement", but it means joining now has a second step performed by
-  somebody else, and nothing prompts the Identity holder to take it.
-  Candidates: the inviter offers Participant at invitation time (invitations
-  are Core's, so the application would have to hook composition); a role may
-  be marked open, so any topic peer may accept it without an individual offer
-  (cheap, but weakens "explicitly offered"); or a joiner may request a role
-  and Identity confirms (an extra round trip, but symmetric with everything
-  else here). **This blocks retiring `agreement_decision`**, because the
-  agreement-level acceptance is currently what a newcomer can act on.
-  Until it is settled, role holdings run *alongside* `agreement_decision`
-  rather than replacing it, and `_interaction_guard` still reads the old
-  record.
+- **[DONE]** How a newly invited person gets their first role — resolved in
+  §2.5 below. Retiring `agreement_decision` is now unblocked but not done:
+  role holdings still run alongside it, and `_interaction_guard` still reads
+  the old record.

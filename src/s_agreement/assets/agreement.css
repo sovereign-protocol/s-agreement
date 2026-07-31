@@ -509,9 +509,21 @@ h2.element-label { margin: 0 0 4px; }
   opacity: 0.65;
   cursor: help;
 }
-.role-revoke, .role-offer-picker { font-size: 12px; padding: 2px 6px; }
+.role-holder[data-status="requested"] .role-holder-status { color: var(--proposal); }
+.role-holder[data-status="revoked"] .role-holder-name,
+.role-holder[data-status="revoked"] .role-holder-status {
+  opacity: 0.6;
+}
+.role-revoke, .role-offer-picker, .role-confirm {
+  font-size: 12px;
+  padding: 2px 6px;
+}
 .role-revoke { opacity: 0; }
 .role-holder:hover .role-revoke, .role-revoke:focus-visible { opacity: 1; }
+/* A request is somebody waiting on you, so the answer to it is always
+   visible rather than waiting for a hover. */
+.role-confirm { border-color: var(--proposal); color: var(--proposal); }
+.role-ask { font-size: 13px; padding: 5px 12px; }
 .role-offer-picker { margin-top: 6px; }
 
 /* The answer this participant owes is what the card exists for, so it is

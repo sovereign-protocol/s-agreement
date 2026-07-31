@@ -735,6 +735,14 @@ class AgreementLogic:
     # several actors, and revoking one must not revoke the rest.
 
     def role_offers(self, role: ProtocolNode) -> list[ProtocolNode]:
+        """Offers that still stand. A revoked one is kept but is not an offer."""
+        return [
+            offer for offer in self._all_role_offers(role)
+            if not offer.data.get("revoked_at")
+        ]
+
+    @staticmethod
+    def _all_role_offers(role: ProtocolNode) -> list[ProtocolNode]:
         return [
             child for child in role.live_children()
             if child.data.get("type") == "agreement_role_offer"
@@ -759,22 +767,34 @@ class AgreementLogic:
             return SessionResult(
                 "error", reason="that actor has already been offered this role",
             )
-        return self.session.create_child(
-            role.uuid,
-            {
-                "type": "agreement_role_offer",
-                "actor_uuid": normalized,
-                "actor_kind": "individual",
-                "offered_by": self.session.identity.uuid,
-                "offered_at": self._now(),
-            },
-            {},
-        )
+        data = {
+            "type": "agreement_role_offer",
+            "actor_uuid": normalized,
+            "actor_kind": "individual",
+            "offered_by": self.session.identity.uuid,
+            "offered_at": self._now(),
+            "revoked_at": None,
+        }
+        # Offering again after a revocation revives the same record rather
+        # than laying a second one beside it.
+        if withdrawn := self._offer_for(role, normalized, revoked=True):
+            return self.session.modify(
+                withdrawn.uuid, data, withdrawn.weights,
+            )
+        return self.session.create_child(role.uuid, data, {})
 
     def revoke_role_offer(
         self, role_uuid: str, actor_uuid: str,
     ) -> SessionResult:
-        """Withdraw an offer. The actor's own decision is theirs and stays."""
+        """Withdraw an offer. The actor's own decision is theirs and stays.
+
+        The offer is marked rather than deleted. Deleting it would leave the
+        actor's surviving answer indistinguishable from somebody asking for
+        the role unprompted, so the Identity holder would immediately be
+        asked to re-offer what they had just withdrawn. Marking is still a
+        withdrawal of what Identity itself wrote, so the authorship rule
+        holds; it just keeps the fact that there was an offer.
+        """
         role = self._node(role_uuid, "agreement_role")
         if not role:
             return SessionResult("error", reason="role not found")
@@ -789,12 +809,25 @@ class AgreementLogic:
         offer = self._offer_for(role, str(actor_uuid or "").strip())
         if not offer:
             return SessionResult("error", reason="offer not found")
-        return self.session.delete(offer.uuid)
+        data = dict(offer.data)
+        data["revoked_at"] = self._now()
+        data["revoked_by"] = self.session.identity.uuid
+        return self.session.modify(offer.uuid, data, offer.weights)
 
     def decide_role(
         self, role_uuid: str, decision: str, expires_at: str | None = None,
     ) -> SessionResult:
-        """Record this participant's own answer to a role they were offered."""
+        """Record this participant's own answer about a role.
+
+        An answer with no matching offer is a *request*: somebody saying they
+        will take this role, waiting on the Identity holder to confirm it.
+        Nothing else is needed to express that, because a holding is live
+        only while both records exist - so an offer alone is an unfilled
+        seat, and a decision alone is a request. It is also how a newcomer
+        gets their first role at all: they hold nothing, so they cannot be
+        offered anything by anyone but Identity, and asking is the move
+        available to them.
+        """
         role = self._node(role_uuid, "agreement_role")
         if not role:
             return SessionResult("error", reason="role not found")
@@ -804,14 +837,11 @@ class AgreementLogic:
             return allowed
         mine = self.session.identity.uuid
         if not self._offer_for(role, mine):
-            adopted = self._adopt_offer_proposal(agreement, role, mine)
-            if adopted.status != "ok":
-                return adopted
-            role = self._node(role_uuid, "agreement_role")
-            if not role or not self._offer_for(role, mine):
-                return SessionResult(
-                    "error", reason="this role has not been offered to you",
-                )
+            # There may be an offer that has only reached this session as a
+            # proposal. If there is, answering it should take it up; if there
+            # is not, this answer stands on its own as a request.
+            self._adopt_offer_proposal(agreement, role, mine)
+            role = self._node(role_uuid, "agreement_role") or role
         normalized_decision = str(decision or "").strip().lower()
         if normalized_decision not in {"accepted", "refused"}:
             return SessionResult(
@@ -899,11 +929,14 @@ class AgreementLogic:
         )
 
     def _offer_for(
-        self, role: ProtocolNode, actor_uuid: str,
+        self, role: ProtocolNode, actor_uuid: str, revoked: bool = False,
     ) -> ProtocolNode | None:
+        source = (
+            self._all_role_offers(role) if revoked else self.role_offers(role)
+        )
         return next(
             (
-                offer for offer in self.role_offers(role)
+                offer for offer in source
                 if offer.data.get("actor_uuid") == actor_uuid
             ),
             None,
@@ -938,15 +971,28 @@ class AgreementLogic:
             for member in self._topic_members(agreement.uuid)
         }
         current = self.role_reference_hash(agreement, role)
+        offers = {
+            str(offer.data.get("actor_uuid") or "").strip(): offer
+            for offer in self._all_role_offers(role)
+        }
+        decisions = self._observed_decisions(agreement, role)
         holders = []
-        for offer in self.role_offers(role):
-            actor_uuid = str(offer.data.get("actor_uuid") or "").strip()
+        for actor_uuid in offers.keys() | decisions.keys():
+            offer = offers.get(actor_uuid)
+            record = decisions.get(actor_uuid)
             member = people.get(actor_uuid)
-            record = (
-                self._observed_role_decision(agreement, role, actor_uuid)
-                if member else None
-            )
-            if not member:
+            revoked = bool(offer and offer.data.get("revoked_at"))
+            if revoked and not record:
+                # Withdrawn, and nobody left holding an answer to it. The
+                # record stays so the offer can be revived, but there is no
+                # longer anyone involved to show.
+                continue
+            if revoked:
+                status = "revoked"
+            elif not offer:
+                # An answer nobody offered: somebody asking to take this.
+                status = "requested"
+            elif not member:
                 status = "unobserved"
             elif not record:
                 status = "pending"
@@ -966,18 +1012,35 @@ class AgreementLogic:
                 "status": status,
                 "decided_at": (record or {}).get("decided_at"),
                 "expires_at": (record or {}).get("expires_at"),
-                "offered_at": offer.data.get("offered_at"),
-                "offered_by": offer.data.get("offered_by"),
+                "offered_at": (offer.data.get("offered_at") if offer else None),
+                "offered_by": (offer.data.get("offered_by") if offer else None),
             })
-        return sorted(holders, key=lambda item: item["name"])
+        return sorted(holders, key=lambda item: (item["status"], item["name"]))
 
-    def _observed_role_decision(
-        self, agreement: ProtocolNode, role: ProtocolNode, actor_uuid: str,
-    ) -> dict | None:
-        if actor_uuid == self.session.identity.uuid:
-            own = self._own_role_decision(role)
-            return dict(own.data) if own else None
+    def _observed_decisions(
+        self, agreement: ProtocolNode, role: ProtocolNode,
+    ) -> dict[str, dict]:
+        """Every answer about this role this session can actually vouch for.
+
+        Only from the replica of the person it belongs to: a peer's copy of a
+        third party's answer is hearsay, and nothing signs content, so it is
+        not counted. That is also what makes an unreachable answer reportable
+        as unobserved rather than invented.
+        """
+        found: dict[str, dict] = {}
+        own = self._own_role_decision(role)
+        if own:
+            found[self.session.identity.uuid] = dict(own.data)
+        members = {
+            address: member
+            for member in self._topic_members(agreement.uuid)
+            for address in member.get("addresses") or [member.get("address")]
+            if address
+        }
         for address in self.session.peer_addresses(agreement.uuid):
+            member = members.get(address)
+            if not member:
+                continue
             peer_topic = self.session.get_cached_peer_subtree(
                 address, agreement.uuid,
             )
@@ -987,19 +1050,13 @@ class AgreementLogic:
             )
             if not peer_role:
                 continue
-            found = next(
-                (
-                    child for child in peer_role.live_children()
-                    if (
-                        child.data.get("type") == "agreement_role_decision"
-                        and child.data.get("actor_uuid") == actor_uuid
-                    )
-                ),
-                None,
-            )
-            if found:
-                return dict(found.data)
-        return None
+            for child in peer_role.live_children():
+                if (
+                    child.data.get("type") == "agreement_role_decision"
+                    and child.data.get("actor_uuid") == member["uuid"]
+                ):
+                    found[member["uuid"]] = dict(child.data)
+        return found
 
     @staticmethod
     def _find_in_subtree(

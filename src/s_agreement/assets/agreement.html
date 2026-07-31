@@ -632,6 +632,8 @@
     const HOLDER_STATUS = {
       accepted: 'accepted',
       pending: 'offered, not yet decided',
+      requested: 'asked to take this',
+      revoked: 'offer withdrawn',
       refused: 'refused',
       expired: 'lapsed',
       outdated: 'accepted an earlier version',
@@ -780,7 +782,29 @@
           state.title = new Date(holder.decided_at).toLocaleString();
         }
         row.append(who, state);
-        if (interactive && payloadState.holds_identity) {
+        // Confirming somebody's request is an ordinary offer. Their answer
+        // is already on record, so the holding goes live at once - they are
+        // not asked to answer a second time.
+        if (interactive && payloadState.holds_identity
+            && holder.status === 'requested' && !holder.is_self) {
+          const confirm = document.createElement('button');
+          confirm.type = 'button';
+          confirm.className = 'role-confirm';
+          confirm.textContent = 'Confirm';
+          confirm.onclick = async () => {
+            try {
+              await api('/api/agreement/roles/offer',
+                {role_uuid: role.uuid, actor_uuid: holder.actor_uuid});
+              await load();
+              showToast(`${holder.name} now holds ${role.data.name}`);
+            } catch (error) { showToast(error.message, true); }
+          };
+          row.append(confirm);
+        }
+        // Only where there is an offer to withdraw: a request and a
+        // withdrawn offer have none.
+        if (interactive && payloadState.holds_identity
+            && !['requested', 'revoked'].includes(holder.status)) {
           const revoke = document.createElement('button');
           revoke.type = 'button';
           revoke.className = 'role-revoke';
@@ -809,48 +833,66 @@
       // The decision this participant owes, if any - the most prominent
       // thing on the card, because it is what the card is for.
       const mine = holders.find(holder => holder.is_self);
-      if (interactive && mine) {
+      if (interactive) {
         const answer = document.createElement('div');
         answer.className = 'role-answer';
-        if (mine.status === 'accepted') {
-          const resign = document.createElement('button');
-          resign.type = 'button';
-          resign.textContent = 'Step out of this role';
-          resign.onclick = async () => {
+        const prompt = document.createElement('span');
+        prompt.className = 'role-answer-prompt';
+        const act = (label, className, run) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = className;
+          button.textContent = label;
+          button.onclick = run;
+          return button;
+        };
+        const decide = (decision, label, className) => act(
+          label, className, async () => {
             try {
-              await api('/api/agreement/roles/resign', {role_uuid: role.uuid});
+              await api('/api/agreement/roles/decide',
+                {role_uuid: role.uuid, decision});
               await load();
-              showToast(`You stepped out of ${role.data.name}`);
             } catch (error) { showToast(error.message, true); }
-          };
-          answer.append(resign);
-        } else {
-          const prompt = document.createElement('span');
-          prompt.className = 'role-answer-prompt';
+          },
+        );
+        const withdraw = (label, toast) => act(label, '', async () => {
+          try {
+            await api('/api/agreement/roles/resign', {role_uuid: role.uuid});
+            await load();
+            showToast(toast);
+          } catch (error) { showToast(error.message, true); }
+        });
+
+        if (mine?.status === 'accepted') {
+          answer.append(withdraw(
+            'Step out of this role', `You stepped out of ${role.data.name}`,
+          ));
+        } else if (mine?.status === 'requested') {
+          prompt.textContent =
+            'You asked to take this. Waiting for the Identity holder.';
+          answer.append(prompt, withdraw('Withdraw request', 'Request withdrawn'));
+        } else if (mine?.status === 'revoked') {
+          prompt.textContent = 'Your offer of this role was withdrawn.';
+          answer.append(prompt, withdraw('Clear', 'Cleared'));
+        } else if (mine) {
           prompt.textContent = mine.status === 'outdated'
             ? 'This role changed since you accepted it.'
             : `You have been offered ${role.data.name}.`;
-          const decide = (decision, label, className) => {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.className = className;
-            button.textContent = label;
-            button.onclick = async () => {
-              try {
-                await api('/api/agreement/roles/decide',
-                  {role_uuid: role.uuid, decision});
-                await load();
-              } catch (error) { showToast(error.message, true); }
-            };
-            return button;
-          };
           answer.append(
             prompt,
             decide('accepted', 'Accept', 'role-accept'),
             decide('refused', 'Refuse', 'role-refuse'),
           );
+        } else if (!payloadState.holds_identity) {
+          // Only the Identity holder can offer, so asking is the move
+          // available to somebody holding nothing. An Identity holder has
+          // the picker instead and would only be confirming themselves.
+          prompt.textContent = '';
+          answer.append(decide(
+            'accepted', `Ask to take ${role.data.name}`, 'role-ask',
+          ));
         }
-        held.append(answer);
+        if (answer.childElementCount) held.append(answer);
       }
 
       if (interactive && payloadState.holds_identity) {

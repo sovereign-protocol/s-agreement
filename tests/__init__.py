@@ -1,1 +1,1 @@
-"""S-Agreement tests."""
+"""S-Team tests."""

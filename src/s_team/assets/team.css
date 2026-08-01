@@ -3,7 +3,7 @@
    This used to frame a light #f9fafb article as paper on a desk - a
    deliberate, documented exception to "dark everywhere" (U4). Overridden:
    the document itself is now the same warm-dark family as the page, one
-   step lighter, the way S-Kanban's --surface sits one step above --bg.
+   step lighter, the way S-Initiative's --surface sits one step above --bg.
    Every colour below was chosen for text/borders on that #f9fafb, so this
    is a full repaint, not a background swap - a dark-gray label on a
    dark-gray field is as unreadable as a light one on a light field. */
@@ -287,9 +287,9 @@ h2.element-label { margin: 0 0 4px; }
 /* Your own badges are the control: click to take a role or step out of it.
    Everybody else's are a statement, so they are not clickable at all. */
 .participant.is-self .role-chip:not(:disabled),
-.participant.is-agreement .role-chip:not(:disabled) { cursor: pointer; }
+.participant.is-team .role-chip:not(:disabled) { cursor: pointer; }
 .participant.is-self .role-chip:not(:disabled):hover,
-.participant.is-agreement .role-chip:not(:disabled):hover {
+.participant.is-team .role-chip:not(:disabled):hover {
   border-color: var(--proposal);
   color: var(--text);
 }

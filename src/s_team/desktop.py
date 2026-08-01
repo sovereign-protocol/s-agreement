@@ -1,4 +1,4 @@
-"""Desktop entry point for S-Agreement.
+"""Desktop entry point for S-Team.
 
 The window, the runtime and the shutdown are Core's. This module supplies
 only what is this application's: which module to start, and what to call the
@@ -15,8 +15,8 @@ from .application import APPLICATION_MANIFEST
 WINDOW_TITLE = APPLICATION_MANIFEST.display_name
 
 APPLICATION_ALIASES = {
-    "agreement": {
-        "app_module": "s_agreement.application",
+    "team": {
+        "app_module": "s_team.application",
         "application_id": APPLICATION_MANIFEST.application_id,
         "asset_package": APPLICATION_MANIFEST.asset_package,
         "ui_file": APPLICATION_MANIFEST.ui_file,
@@ -26,7 +26,7 @@ APPLICATION_ALIASES = {
 
 
 def main(argv: list[str] | None = None) -> int:
-    return desktop_main(argv, "agreement", WINDOW_TITLE, APPLICATION_ALIASES)
+    return desktop_main(argv, "team", WINDOW_TITLE, APPLICATION_ALIASES)
 
 
 if __name__ == "__main__":

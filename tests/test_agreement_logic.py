@@ -3,8 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from s_agreement.application import APPLICATION_MANIFEST
-from s_agreement.logic import AgreementLogic
+from s_team.application import APPLICATION_MANIFEST
+from s_team.logic import TeamLogic
 from sovereign import ProtocolNode, Session
 from sovereign import app_server
 from sovereign.relay_logic import RelayLogic
@@ -50,7 +50,7 @@ def sync(*runtimes) -> None:
             runtime.relay.poll_and_apply()
 
 
-class AgreementLogicTests(unittest.TestCase):
+class TeamLogicTests(unittest.TestCase):
     def test_document_snapshot_never_consults_transport_under_session(self):
         class NoTransport:
             def network_info(self, _topic_uuid=None):
@@ -60,7 +60,7 @@ class AgreementLogicTests(unittest.TestCase):
                 raise AssertionError("transport reached from Session snapshot")
 
         session = Session("local")
-        logic = AgreementLogic(session, collaboration=NoTransport())
+        logic = TeamLogic(session, collaboration=NoTransport())
         agreement_uuid = logic.create_agreement("Atomic view").value
 
         with session.lock:
@@ -74,7 +74,7 @@ class AgreementLogicTests(unittest.TestCase):
         runtime = self.runtime(8610)
         created = runtime.logic.create_agreement("Read only")
         with runtime.session.lock:
-            metadata = runtime.session.application_metadata("agreement")
+            metadata = runtime.session.application_metadata("team")
             metadata.pop("selected_agreement_uuid", None)
 
         payload = runtime.logic.document_payload()
@@ -83,7 +83,7 @@ class AgreementLogicTests(unittest.TestCase):
         with runtime.session.lock:
             self.assertNotIn(
                 "selected_agreement_uuid",
-                runtime.session.application_metadata("agreement"),
+                runtime.session.application_metadata("team"),
             )
 
     def test_manifest_and_minimal_document_tree(self):
@@ -98,7 +98,7 @@ class AgreementLogicTests(unittest.TestCase):
         ).value
         payload = runtime.logic.document_payload()
 
-        self.assertEqual(APPLICATION_MANIFEST.application_id, "agreement")
+        self.assertEqual(APPLICATION_MANIFEST.application_id, "team")
         self.assertEqual(payload["agreement"]["uuid"], agreement_uuid)
         sections = [
             child for child in payload["agreement"]["children"]
@@ -578,12 +578,12 @@ class AgreementLogicTests(unittest.TestCase):
         # in another.
         #
         # Only this application is checked here. Core ships these tests, and a
-        # Core test that imports S-Kanban cannot run for anyone who installed
+        # Core test that imports S-Initiative cannot run for anyone who installed
         # Core alone - which is the dependency direction the architecture
         # forbids in the first place. The cross-application comparison lives
         # in test_cross_application.py, which stays in the working repository
         # where every application is present.
-        from s_agreement import logic as agreement_logic
+        from s_team import logic as agreement_logic
 
         source = Path(agreement_logic.__file__).read_text(encoding="utf-8")
         self.assertIn("Session.TRANSITION_PRIORITY", source)
@@ -752,7 +752,7 @@ class AgreementLogicTests(unittest.TestCase):
         self.assertNotIn("auto_adopt_mode", payload)
         self.assertNotIn("auto_adopt_modes", payload)
         paths = {route.path for route in app_server.build_app(runtime).routes}
-        self.assertNotIn("/api/agreement/auto_adopt", paths)
+        self.assertNotIn("/api/team/auto_adopt", paths)
 
     def test_invitation_and_transition_visibility(self):
         left = self.runtime(9402)
@@ -819,11 +819,11 @@ class AgreementLogicTests(unittest.TestCase):
             right.session.protocol.index[clause_uuid].parent_uuid, section_uuid,
         )
 
-    def test_mailbox_invitation_mounts_agreement_without_core_special_case(self):
+    def test_mailbox_invitation_mounts_team_without_core_special_case(self):
         with tempfile.TemporaryDirectory() as relay_root, \
                 tempfile.TemporaryDirectory() as state_dir:
             session_a = Session("addr-a")
-            logic_a = AgreementLogic(session_a)
+            logic_a = TeamLogic(session_a)
             session_a.register_application(logic_a.application_registration())
             agreement_uuid = logic_a.create_agreement("Relayed agreement").value
             section_uuid = logic_a.create_section(agreement_uuid, "Scope").value
@@ -836,7 +836,7 @@ class AgreementLogicTests(unittest.TestCase):
             descriptor = relay_a.channel_descriptor()
 
             session_b = Session("addr-b")
-            logic_b = AgreementLogic(session_b)
+            logic_b = TeamLogic(session_b)
             session_b.register_application(logic_b.application_registration())
             relay_b = RelayLogic(
                 session_b,
@@ -870,7 +870,7 @@ class AgreementLogicTests(unittest.TestCase):
 
     def test_delete_agreement_removes_the_whole_document(self):
         runtime = self.runtime(9451)
-        logic: AgreementLogic = runtime.logic
+        logic: TeamLogic = runtime.logic
         agreement_uuid = logic.create_agreement("Working agreement").value
         section_uuid = logic.create_section(agreement_uuid, "Scope").value
         clause_uuid = logic.create_clause(section_uuid, "One clause.").value
@@ -885,7 +885,7 @@ class AgreementLogicTests(unittest.TestCase):
 
     def test_deleting_the_last_agreement_leaves_none_selected(self):
         runtime = self.runtime(9452)
-        logic: AgreementLogic = runtime.logic
+        logic: TeamLogic = runtime.logic
         agreement_uuid = logic.create_agreement("Working agreement").value
 
         logic.delete_agreement(agreement_uuid)
@@ -894,7 +894,7 @@ class AgreementLogicTests(unittest.TestCase):
 
     def test_delete_agreement_rejects_a_node_that_is_not_one(self):
         runtime = self.runtime(9453)
-        logic: AgreementLogic = runtime.logic
+        logic: TeamLogic = runtime.logic
         agreement_uuid = logic.create_agreement("Working agreement").value
         section_uuid = logic.create_section(agreement_uuid, "Scope").value
 
@@ -904,10 +904,10 @@ class AgreementLogicTests(unittest.TestCase):
         self.assertEqual(len(logic.agreements()), 1)
 
     def test_sections_and_clauses_are_returned_in_display_order(self):
-        # Personal Cockpit reads an agreement through these, so the order
+        # S-Cockpit reads an agreement through these, so the order
         # they return is the order the document is read in.
         runtime = self.runtime(9454)
-        logic: AgreementLogic = runtime.logic
+        logic: TeamLogic = runtime.logic
         agreement_uuid = logic.create_agreement("Working agreement").value
         first = logic.create_section(agreement_uuid, "First").value
         second = logic.create_section(agreement_uuid, "Second").value
@@ -1749,8 +1749,8 @@ class AgreementLogicTests(unittest.TestCase):
         for node_type in (
             "agreement_role", "agreement_accountability", "agreement_domain",
         ):
-            self.assertIn(node_type, AgreementLogic.REACTABLE)
-            self.assertIn(node_type, AgreementLogic.OWNED_NODE_TYPES)
+            self.assertIn(node_type, TeamLogic.REACTABLE)
+            self.assertIn(node_type, TeamLogic.OWNED_NODE_TYPES)
         self.assertTrue(runtime.logic.owns_node(role_uuid))
         self.assertTrue(runtime.logic.owns_node(item_uuid))
 
@@ -2201,13 +2201,13 @@ class AgreementLogicTests(unittest.TestCase):
     def runtime(self, port: int):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        config = app_server.load_config(None, "agreement", {
-            "agreement": {
-                "app_module": "s_agreement.application",
-                "application_id": "agreement",
-                "asset_package": "s_agreement.assets",
-                "ui_file": "agreement.html",
-                "css_file": "agreement.css",
+        config = app_server.load_config(None, "team", {
+            "team": {
+                "app_module": "s_team.application",
+                "application_id": "team",
+                "asset_package": "s_team.assets",
+                "ui_file": "team.html",
+                "css_file": "team.css",
             },
         })
         config["storage_file"] = str(Path(directory.name) / f"{port}.json")

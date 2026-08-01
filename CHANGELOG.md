@@ -100,7 +100,7 @@ the organizational tree fall out of the role model rather than sit beside it.
 ## 0.1.0a2 - 2026-07-30
 
 - Require Sovereign Core 0.1.5 for composite application responses.
-- `/api/agreement/document` now uses Core's atomic
+- `/api/team/document` now uses Core's atomic
   snapshot-observe-merge boundary, so a relay poll cannot tear one response.
 - Agreement selection metadata is now read as a snapshot and written in
   one Session transaction, matching Core 0.1.5's locked metadata contract.
@@ -115,27 +115,27 @@ the organizational tree fall out of the role model rather than sit beside it.
   effect nothing can deliver any more; it now returns the result alone.
   Sharing an agreement over a relay is unchanged.
 - The two-client tests connect over a relay folder instead of an in-process
-  HTTP stand-in, the same change S-Kanban and Core made. Behaviour
+  HTTP stand-in, the same change S-Initiative and Core made. Behaviour
   unchanged; see Core's `DESIGN_TOPIC_HOME_CHANNELS.md` section 3.
-- An agreement can be deleted (`/api/agreement/agreements/delete`). Deleting
+- An agreement can be deleted (`/api/team/agreements/delete`). Deleting
   one stops sharing it first, so peers are not left syncing a document this
   side no longer has. Unlike a board there is no last-one guard: nothing
   creates an agreement on demand, and a host with none is a valid state.
 - The facade exposes an agreement's `sections` and their `clauses`, so
-  Personal Cockpit can show a whole agreement without importing this
+  S-Cockpit can show a whole agreement without importing this
   package.
 - Moved out of the Core repository into its own, where every other
   application already lives.
 - Relicensed from `LGPL-3.0-or-later` to **Apache-2.0**. It carried Core's
   licence only because it sat inside Core's repository, whose `NOTICE` makes
   the repository licence the default for examples. As an application it takes
-  the application licence, matching S-Kanban and Personal Cockpit. Sole
+  the application licence, matching S-Initiative and S-Cockpit. Sole
   copyright holder, so no contributor consent was required.
 - Added a desktop entry point and the `desktop` extra, so it can open in its
-  own window like S-Kanban.
+  own window like S-Initiative.
 
 Its history from inside the Core repository is preserved; commits before this
-point were made while it lived at `examples/s-agreement`.
+point were made while it lived at `examples/s-team`.
 
 ## 0.1.0a1 — unreleased from the Core repository
 

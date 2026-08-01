@@ -1,6 +1,6 @@
 {
   "applications": [
-    {"module": "s_agreement.application"}
+    {"module": "s_team.application"}
   ],
   "primary_application_id": "agreement",
   "advertise_host": "127.0.0.1",

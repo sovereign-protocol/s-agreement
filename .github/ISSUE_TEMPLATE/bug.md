@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Report a reproducible S-Kanban defect
+about: Report a reproducible S-Initiative defect
 labels: bug
 ---
 

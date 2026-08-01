@@ -1,10 +1,10 @@
-"""Boundaries and packaging invariants for what S-Agreement ships.
+"""Boundaries and packaging invariants for what S-Team ships.
 
 Source scans rather than integration tests, so each assertion runs in the
 repository owning the source it guards and fails in the pull request that
-breaks it. Core, S-Kanban and Personal Cockpit hold matching shares.
+breaks it. Core, S-Initiative and S-Cockpit hold matching shares.
 
-These matter more here than they did while S-Agreement lived inside Core.
+These matter more here than they did while S-Team lived inside Core.
 Core's own suite scanned it as the shipped example; once it moved out, that
 scan lost its subject and these took over.
 """
@@ -15,13 +15,13 @@ import unittest
 from importlib.resources import files
 from pathlib import Path
 
-import s_agreement
+import s_team
 import sovereign
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCES = sorted((ROOT / "src").rglob("*.py"))
-OTHER_APPLICATIONS = ("personal_cockpit", "s_kanban")
+OTHER_APPLICATIONS = ("s_cockpit", "s_initiative")
 
 
 def imported_modules(path: Path) -> set[str]:
@@ -41,7 +41,7 @@ def imported_modules(path: Path) -> set[str]:
 class PackagingTests(unittest.TestCase):
     def test_distribution_and_module_versions_agree(self):
         self.assertEqual(
-            importlib.metadata.version("s-agreement"), s_agreement.__version__,
+            importlib.metadata.version("sovereign-team"), s_team.__version__,
         )
 
     def test_the_distribution_is_apache_licensed_like_every_application(self):
@@ -49,29 +49,29 @@ class PackagingTests(unittest.TestCase):
         # repository, where NOTICE makes the repository licence the default
         # for examples. Moving out without this change would have shipped a
         # copyleft application while claiming the application licence.
-        metadata = importlib.metadata.metadata("s-agreement")
+        metadata = importlib.metadata.metadata("sovereign-team")
         declared = metadata.get("License-Expression") or metadata.get("License") or ""
         self.assertIn("Apache-2.0", declared)
 
     def test_installed_browser_assets_are_available(self):
-        assets = files("s_agreement.assets")
+        assets = files("s_team.assets")
         self.assertIn(
             "<!doctype html",
-            assets.joinpath("agreement.html").read_text(encoding="utf-8"),
+            assets.joinpath("team.html").read_text(encoding="utf-8"),
         )
-        self.assertTrue(assets.joinpath("agreement.css").is_file())
+        self.assertTrue(assets.joinpath("team.css").is_file())
 
     def test_package_sources_live_under_the_declared_src_root(self):
         # Asserting where the imported module loaded from only holds for an
         # editable install: CI installs a wheel, so __file__ points into
         # site-packages. The invariant is this repository's layout.
-        self.assertTrue((ROOT / "src" / "s_agreement" / "__init__.py").is_file())
-        self.assertFalse((ROOT / "s_agreement").exists())
+        self.assertTrue((ROOT / "src" / "s_team" / "__init__.py").is_file())
+        self.assertFalse((ROOT / "s_team").exists())
 
 
 class BoundaryTests(unittest.TestCase):
     def setUp(self):
-        self.assertTrue(SOURCES, "no S-Agreement sources found")
+        self.assertTrue(SOURCES, "no S-Team sources found")
 
     def test_imports_core_only_through_its_public_root(self):
         public_names = set(sovereign.__all__)
@@ -139,7 +139,7 @@ class BoundaryTests(unittest.TestCase):
                 self.assertNotIn(literal, source, f"{path} re-declares the ranking")
 
     def test_domain_logic_does_not_depend_on_host_or_http_controllers(self):
-        path = ROOT / "src" / "s_agreement" / "logic.py"
+        path = ROOT / "src" / "s_team" / "logic.py"
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         imports = imported_modules(path)
         self.assertFalse(
@@ -166,7 +166,7 @@ class BoundaryTests(unittest.TestCase):
 
     def test_document_get_uses_the_composite_snapshot_boundary(self):
         source = (
-            ROOT / "src" / "s_agreement" / "controller.py"
+            ROOT / "src" / "s_team" / "controller.py"
         ).read_text(encoding="utf-8")
         self.assertIn("runtime.composite_response(", source)
         self.assertIn("logic.document_snapshot", source)
@@ -175,8 +175,8 @@ class BoundaryTests(unittest.TestCase):
 
 class AssetTests(unittest.TestCase):
     def setUp(self):
-        self.agreement = files("s_agreement.assets").joinpath(
-            "agreement.html",
+        self.agreement = files("s_team.assets").joinpath(
+            "team.html",
         ).read_text(encoding="utf-8")
 
     def test_peer_only_nodes_are_presented_as_proposals(self):
@@ -192,7 +192,7 @@ class AssetTests(unittest.TestCase):
         self.assertIn("SovereignShell.setTopicSelector", self.agreement)
 
     def test_agenda_exposes_the_shared_move_route(self):
-        self.assertIn("move: '/api/agreement/agenda/move'", self.agreement)
+        self.assertIn("move: '/api/team/agenda/move'", self.agreement)
         self.assertIn(
             "displayedChildren(current, 'agreement_section')",
             self.agreement,
@@ -263,8 +263,8 @@ class AssetTests(unittest.TestCase):
         # is, so a role reads as a line of people rather than of controls.
         self.assertIn("payloadState.holds_identity", self.agreement)
         self.assertIn("holder-action", self.agreement)
-        self.assertIn("/api/agreement/roles/revoke", self.agreement)
-        self.assertIn("/api/agreement/roles/offer", self.agreement)
+        self.assertIn("/api/team/roles/revoke", self.agreement)
+        self.assertIn("/api/team/roles/offer", self.agreement)
 
     def test_who_holds_a_role_is_a_badge_and_the_rest_is_a_tooltip(self):
         # The line shows a face and a name; when they answered, against which
@@ -281,8 +281,8 @@ class AssetTests(unittest.TestCase):
         # yours are. There is no separate idea of a seat with a section of
         # its own.
         self.assertIn("payloadState.seat_offers", self.agreement)
-        self.assertIn("/api/agreement/roles/decline_seat", self.agreement)
-        self.assertIn("is-agreement", self.agreement)
+        self.assertIn("/api/team/roles/decline_seat", self.agreement)
+        self.assertIn("is-team", self.agreement)
         for gone in ("renderSeats", "renderSeatOffers", "seat-offer", "Seats held"):
             self.assertNotIn(gone, self.agreement)
 
@@ -304,8 +304,8 @@ class AssetTests(unittest.TestCase):
         self.assertNotIn("agreements/clone", self.agreement)
 
     def test_the_page_uses_shared_add_controls_and_has_no_state_line(self):
-        css = files("s_agreement.assets").joinpath(
-            "agreement.css",
+        css = files("s_team.assets").joinpath(
+            "team.css",
         ).read_text(encoding="utf-8")
         self.assertIn("#document > .ui-disclosure", css)
         self.assertIn("SovereignUI.addComposer", self.agreement)
@@ -320,8 +320,8 @@ class AssetTests(unittest.TestCase):
         self.assertNotIn("One actor", self.agreement)
 
     def test_document_add_controls_live_on_their_heading_rows(self):
-        css = files("s_agreement.assets").joinpath(
-            "agreement.css",
+        css = files("s_team.assets").joinpath(
+            "team.css",
         ).read_text(encoding="utf-8")
         self.assertIn("addControl: currentInteractionAllowed", self.agreement)
         self.assertIn("addControl: !proposed && currentInteractionAllowed", self.agreement)
@@ -330,8 +330,8 @@ class AssetTests(unittest.TestCase):
         self.assertNotIn("block.append(SovereignUI.addComposer", self.agreement)
 
     def test_role_offer_picker_shares_the_held_by_heading_and_theme(self):
-        css = files("s_agreement.assets").joinpath(
-            "agreement.css",
+        css = files("s_team.assets").joinpath(
+            "team.css",
         ).read_text(encoding="utf-8")
         self.assertIn("heldHeading.append(picker)", self.agreement)
         self.assertIn(".role-holders-heading", css)
@@ -343,7 +343,7 @@ class AssetTests(unittest.TestCase):
         # lands somewhere that depends on host configuration.
         for number, line in enumerate(self.agreement.splitlines(), start=1):
             for pattern in ('href = `/?', 'href="/?', "href='/?"):
-                self.assertNotIn(pattern, line, f"agreement.html:{number}")
+                self.assertNotIn(pattern, line, f"team.html:{number}")
 
 
 class ThemeTests(unittest.TestCase):
@@ -355,8 +355,8 @@ class ThemeTests(unittest.TestCase):
     """
 
     def setUp(self):
-        self.css = files("s_agreement.assets").joinpath(
-            "agreement.css",
+        self.css = files("s_team.assets").joinpath(
+            "team.css",
         ).read_text(encoding="utf-8")
 
     def test_declares_a_dark_colour_scheme(self):

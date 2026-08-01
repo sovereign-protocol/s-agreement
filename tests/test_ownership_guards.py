@@ -2,8 +2,8 @@ import asyncio
 import json
 import unittest
 
-from s_agreement.controller import build_routes
-from s_agreement.logic import AgreementLogic
+from s_team.controller import build_routes
+from s_team.logic import TeamLogic
 from sovereign import Session
 from starlette.requests import Request
 
@@ -39,7 +39,7 @@ def _post_request(path: str, payload: dict) -> Request:
 class AgreementOwnershipControllerTests(unittest.TestCase):
     def setUp(self):
         self.session = Session("local")
-        self.logic = AgreementLogic(self.session)
+        self.logic = TeamLogic(self.session)
         self.logic.create_agreement("Local agreement")
         self.routes = build_routes(self.logic, _Runtime())
 
@@ -54,7 +54,7 @@ class AgreementOwnershipControllerTests(unittest.TestCase):
             {},
         ).value
 
-        response = self._post("/api/agreement/clauses/update", {
+        response = self._post("/api/team/clauses/update", {
             "clause_uuid": foreign.uuid,
             "text": "overwritten",
         })
@@ -82,7 +82,7 @@ class AgreementOwnershipControllerTests(unittest.TestCase):
         )
         self.session.note_indirect_peer_topic("peer", foreign_topic.uuid)
 
-        response = self._post("/api/agreement/react", {
+        response = self._post("/api/team/react", {
             "source_addr": "peer",
             "node_uuid": peer_clause.uuid,
             "reaction": "adopt",

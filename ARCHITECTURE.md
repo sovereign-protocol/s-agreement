@@ -1,6 +1,6 @@
 # Architecture
 
-S-Agreement owns agreement node schemas (`agreement`, `agreement_section`,
+S-Team owns agreement node schemas (`agreement`, `agreement_section`,
 `agreement_clause`, `agreement_role` and its items, `agreement_role_offer`,
 `agreement_role_decision`, `agreement_role_holding`, `agreement_identity`), its
 proposal and adoption policy, controllers, facade, and browser UI. It imports only the documented `sovereign` package root. Sovereign
@@ -39,7 +39,7 @@ out of the body hash, and are rendered as identity badges rather than
 document-change proposals. A child topic mounts only when the local
 participant has a current, unexpired acceptance for every ancestor.
 
-Where it differs from S-Kanban: a peer's node that has no local counterpart is
+Where it differs from S-Initiative: a peer's node that has no local counterpart is
 presented as a *proposal* to accept or withdraw, rather than merged and then
 reconciled. A document is a thing people agree to before it is true, so the
 adoption step is the point rather than an obstacle.

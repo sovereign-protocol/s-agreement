@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>S-Agreement</title>
+  <title>S-Team</title>
   <link rel="stylesheet" href="/shared.css">
-  <link rel="stylesheet" href="/apps/agreement/styles.css">
+  <link rel="stylesheet" href="/apps/team/styles.css">
 </head>
 <body>
   <div id="toast" class="toast"></div>
@@ -187,7 +187,7 @@
         react.title = transitionLabel(transition);
         react.onclick = async () => {
           try {
-            await api('/api/agreement/react', {
+            await api('/api/team/react', {
               node_uuid: node.uuid,
               source_addr: transition.peer_addr,
               reaction: transition.reaction || 'adopt',
@@ -281,7 +281,7 @@
     };
 
     const selectAgreement = async (agreementUuid) => {
-      await api('/api/agreement/agreements/select',
+      await api('/api/team/agreements/select',
         {agreement_uuid: agreementUuid});
       await load();
     };
@@ -424,8 +424,8 @@
           chip.disabled = true;
           try {
             await api(
-              held ? '/api/agreement/roles/resign'
-                   : '/api/agreement/roles/decide',
+              held ? '/api/team/roles/resign'
+                   : '/api/team/roles/decide',
               held ? {role_uuid: role.uuid}
                    : {role_uuid: role.uuid, decision: 'accepted'},
             );
@@ -471,7 +471,7 @@
         const seats = payloadState.parents || [];
         const offers = payloadState.seat_offers || [];
         const row = document.createElement('div');
-        row.className = 'participant is-agreement';
+        row.className = 'participant is-team';
         row.append(avatarFor({actor_kind: 'agreement'}));
         const body = document.createElement('span');
         body.className = 'acceptance-body';
@@ -520,7 +520,7 @@
         chip.onclick = async () => {
           chip.disabled = true;
           try {
-            await api('/api/agreement/roles/unseat', {
+            await api('/api/team/roles/unseat', {
               role_uuid: seat.role_uuid, agreement_uuid: current.uuid,
             });
             await load();
@@ -537,7 +537,7 @@
           prefer.onclick = async event => {
             event.stopPropagation();
             try {
-              await api('/api/agreement/parents/move',
+              await api('/api/team/parents/move',
                 {holding_uuid: seat.holding_uuid, index: 0});
               await load();
             } catch (error) { showToast(error.message, true); }
@@ -574,7 +574,7 @@
         chip.onclick = async () => {
           chip.disabled = true;
           try {
-            await api('/api/agreement/roles/seat', {
+            await api('/api/team/roles/seat', {
               role_uuid: offer.role_uuid, agreement_uuid: current.uuid,
             });
             await load();
@@ -594,7 +594,7 @@
           decline.onclick = async event => {
             event.stopPropagation();
             try {
-              await api('/api/agreement/roles/decline_seat', {
+              await api('/api/team/roles/decline_seat', {
                 role_uuid: offer.role_uuid, agreement_uuid: current.uuid,
               });
               await load();
@@ -684,7 +684,7 @@
         theirs.textContent = `Accept ${claims[0].holder_name}`;
         theirs.onclick = async () => {
           try {
-            await api('/api/agreement/react', {
+            await api('/api/team/react', {
               node_uuid: identity.node_uuid,
               source_addr: transition.peer_addr,
               reaction: 'adopt',
@@ -699,7 +699,7 @@
           `Keep ${identity.is_self ? 'yours' : identity.holder_name}`;
         mine.onclick = async () => {
           try {
-            await api('/api/agreement/react', {
+            await api('/api/team/react', {
               node_uuid: identity.node_uuid,
               source_addr: transition.peer_addr,
               reaction: 'rollback',
@@ -733,7 +733,7 @@
         take.onclick = () => {
           const run = async () => {
             try {
-              await api('/api/agreement/identity/take',
+              await api('/api/team/identity/take',
                 {agreement_uuid: current.uuid});
               ephemeral.openMenu = '';
               await load();
@@ -808,7 +808,7 @@
         node: role,
         tag: 'h4',
         field: 'name',
-        rename: value => api('/api/agreement/roles/rename',
+        rename: value => api('/api/team/roles/rename',
           {role_uuid: role.uuid, name: value}),
         proposed,
         interactive,
@@ -816,14 +816,14 @@
         count,
         onMove: movable ? async newIndex => {
           try {
-            await api('/api/agreement/roles/move',
+            await api('/api/team/roles/move',
               {role_uuid: role.uuid, index: newIndex});
             await load();
           } catch (error) { showToast(error.message, true); }
         } : null,
         onDelete: interactive ? async () => {
           try {
-            await api('/api/agreement/roles/delete', {role_uuid: role.uuid});
+            await api('/api/team/roles/delete', {role_uuid: role.uuid});
             await load();
           } catch (error) { showToast(error.message, true); }
         } : null,
@@ -839,7 +839,7 @@
       purpose.textContent = role.data.purpose || '';
       if (interactive) {
         editable(purpose, role.data.purpose || '', value =>
-          api('/api/agreement/roles/set_purpose',
+          api('/api/team/roles/set_purpose',
             {role_uuid: role.uuid, purpose: value}));
       }
       card.append(purpose);
@@ -859,7 +859,7 @@
             node: item,
             tag: 'p',
             field: 'text',
-            rename: value => api('/api/agreement/roles/items/update',
+            rename: value => api('/api/team/roles/items/update',
               {item_uuid: item.uuid, text: value}),
             proposed: itemProposed,
             interactive: interactive && !itemProposed,
@@ -869,14 +869,14 @@
               ? null
               : async newIndex => {
                 try {
-                  await api('/api/agreement/roles/items/move',
+                  await api('/api/team/roles/items/move',
                     {item_uuid: item.uuid, index: newIndex});
                   await load();
                 } catch (error) { showToast(error.message, true); }
               },
             onDelete: interactive && !itemProposed ? async () => {
               try {
-                await api('/api/agreement/roles/items/delete',
+                await api('/api/team/roles/items/delete',
                   {item_uuid: item.uuid});
                 await load();
               } catch (error) { showToast(error.message, true); }
@@ -890,7 +890,7 @@
             noun: kind,
             placeholder: add,
             onSubmit: async text => {
-              await api('/api/agreement/roles/items/create',
+              await api('/api/team/roles/items/create',
                 {role_uuid: role.uuid, kind, text});
               await load();
             },
@@ -999,7 +999,7 @@
           confirm.onclick = async event => {
             event.stopPropagation();
             try {
-              await api('/api/agreement/roles/offer',
+              await api('/api/team/roles/offer',
                 {role_uuid: role.uuid, actor_uuid: holder.actor_uuid});
               await load();
               showToast(`${holder.name} now holds ${role.data.name}`);
@@ -1022,7 +1022,7 @@
               + 'gave is theirs and stays, but the role is no longer held.',
               async () => {
                 try {
-                  await api('/api/agreement/roles/revoke',
+                  await api('/api/team/roles/revoke',
                     {role_uuid: role.uuid, actor_uuid: holder.actor_uuid});
                   await load();
                 } catch (error) { showToast(error.message, true); }
@@ -1080,7 +1080,7 @@
             const chosen = picker.value;
             picker.value = '';
             try {
-              await api('/api/agreement/roles/offer',
+              await api('/api/team/roles/offer',
                 {role_uuid: role.uuid, actor_uuid: chosen});
               await load();
             } catch (error) { showToast(error.message, true); }
@@ -1127,7 +1127,7 @@
           noun: 'role',
           placeholder: 'Role name',
           onSubmit: async name => {
-            await api('/api/agreement/roles/create',
+            await api('/api/team/roles/create',
               {agreement_uuid: agreement.uuid, name});
             await load();
           },
@@ -1160,7 +1160,7 @@
         selectedUuid: current?.uuid || '',
         onSelect: selectAgreement,
         onRename: current && currentInteractionAllowed ? async title => {
-          await api('/api/agreement/agreements/rename',
+          await api('/api/team/agreements/rename',
             {agreement_uuid: current.uuid, title});
           await load();
         } : null,
@@ -1204,7 +1204,7 @@
         node: current,
         tag: 'h2',
         field: 'title',
-        rename: value => api('/api/agreement/agreements/rename',
+        rename: value => api('/api/team/agreements/rename',
           {agreement_uuid: current.uuid, title: value}),
         interactive: currentInteractionAllowed,
         addControl: currentInteractionAllowed
@@ -1213,7 +1213,7 @@
             placeholder: 'Section title',
             className: 'element-add-control',
             onSubmit: async title => {
-              await api('/api/agreement/sections/create',
+              await api('/api/team/sections/create',
                 {agreement_uuid: current.uuid, title});
               await load();
             },
@@ -1241,7 +1241,7 @@
           proposed,
           interactive: currentInteractionAllowed,
           rename: proposed ? null : value => api(
-            '/api/agreement/sections/rename',
+            '/api/team/sections/rename',
             {section_uuid: section.uuid, title: value},
           ),
           addControl: !proposed && currentInteractionAllowed
@@ -1250,7 +1250,7 @@
               placeholder: 'Clause text',
               className: 'element-add-control',
               onSubmit: async text => {
-                await api('/api/agreement/clauses/create',
+                await api('/api/team/clauses/create',
                   {section_uuid: section.uuid, text});
                 await load();
               },
@@ -1259,7 +1259,7 @@
             : null,
           onDelete: proposed ? null : async () => {
             try {
-              await api('/api/agreement/sections/delete', {section_uuid: section.uuid});
+              await api('/api/team/sections/delete', {section_uuid: section.uuid});
               await load();
             } catch (error) { showToast(error.message, true); }
           },
@@ -1269,7 +1269,7 @@
           count: sections.length,
           onMove: proposed || sectionsHaveProposals ? null : async newIndex => {
             try {
-              await api('/api/agreement/sections/move',
+              await api('/api/team/sections/move',
                 {section_uuid: section.uuid, index: newIndex});
               await load();
             } catch (error) { showToast(error.message, true); }
@@ -1288,12 +1288,12 @@
             proposed: clauseProposed,
             interactive: currentInteractionAllowed,
             rename: clauseProposed ? null : value => api(
-              '/api/agreement/clauses/update',
+              '/api/team/clauses/update',
               {clause_uuid: clause.uuid, text: value},
             ),
             onDelete: clauseProposed ? null : async () => {
               try {
-                await api('/api/agreement/clauses/delete', {clause_uuid: clause.uuid});
+                await api('/api/team/clauses/delete', {clause_uuid: clause.uuid});
                 await load();
               } catch (error) { showToast(error.message, true); }
             },
@@ -1303,7 +1303,7 @@
             count: clauses.length,
             onMove: clauseProposed || clausesHaveProposals ? null : async newIndex => {
               try {
-                await api('/api/agreement/clauses/move',
+                await api('/api/team/clauses/move',
                   {clause_uuid: clause.uuid, index: newIndex});
                 await load();
               } catch (error) { showToast(error.message, true); }
@@ -1335,7 +1335,7 @@
       SovereignShell.refresh();
     };
 
-    const load = async () => render(await api('/api/agreement/document'));
+    const load = async () => render(await api('/api/team/document'));
 
     SovereignShell.mount({
       container: document.querySelector('#shell'),
@@ -1347,10 +1347,10 @@
       onChanged: () => load(),
       agendaRoutes: {
         topicKey: 'agreement_uuid',
-        create: '/api/agreement/agenda/create',
-        delete: '/api/agreement/agenda/delete',
-        setPriority: '/api/agreement/agenda/set_priority',
-        move: '/api/agreement/agenda/move',
+        create: '/api/team/agenda/create',
+        delete: '/api/team/agenda/delete',
+        setPriority: '/api/team/agenda/set_priority',
+        move: '/api/team/agenda/move',
       },
       // Name a node so the disagreement pane can say which clause or section
       // is unsettled, rather than showing a bare uuid.
@@ -1362,14 +1362,14 @@
       },
     });
 
-    // Deep link from the overview: /apps/agreement?agreement=<uuid> selects
+    // Deep link from the overview: /apps/team?agreement=<uuid> selects
     // that agreement on arrival, mirroring Kanban's ?board=<uuid>.
     async function selectAgreementFromUrl() {
       const params = new URLSearchParams(window.location.search);
       const uuid = params.get('agreement');
       if (!uuid) return;
       try {
-        await api('/api/agreement/agreements/select', {agreement_uuid: uuid});
+        await api('/api/team/agreements/select', {agreement_uuid: uuid});
       } catch (error) { showToast(error.message, true); }
       params.delete('agreement');
       const query = params.toString();

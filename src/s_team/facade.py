@@ -1,23 +1,23 @@
-"""Versioned public query/command facade exposed by S-Agreement.
+"""Versioned public query/command facade exposed by S-Team.
 
-Mirrors S-Kanban's facade: a stable, explicitly versioned surface an
-aggregator like Personal Cockpit can consume without importing this package.
+Mirrors S-Initiative's facade: a stable, explicitly versioned surface an
+aggregator like S-Cockpit can consume without importing this package.
 """
 
 from __future__ import annotations
 
 from sovereign import ProtocolNode
 
-from .logic import AgreementLogic
+from .logic import TeamLogic
 
 
-AGREEMENT_FACADE_API_VERSION = 1
+TEAM_FACADE_API_VERSION = 1
 
 
-class AgreementFacade:
+class TeamFacade:
     """Stable facade returning detached node snapshots and command results."""
 
-    def __init__(self, logic: AgreementLogic):
+    def __init__(self, logic: TeamLogic):
         self._logic = logic
 
     def agreements(self) -> list[ProtocolNode]:

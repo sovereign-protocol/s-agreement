@@ -342,7 +342,7 @@ roles are proven as content.
 ### Step 0 — Baseline **[DONE]**
 
 Commit the in-flight tree/sub-agreement/badge work (1,784 insertions across
-`logic.py`, `agreement.html`, `agreement.css`, controller, facade, tests) on
+`logic.py`, `team.html`, `team.css`, controller, facade, tests) on
 its own branch before anything is layered on it.
 
 ### Step 1 — Roles as content **[DONE]**
@@ -724,7 +724,7 @@ nodes.
 The document re-renders fully on every payload, polled every 3s. That stays.
 
 `render()` already refuses to rebuild while the document is being edited
-(agreement.html): it returns early when `document.activeElement` is inside
+(team.html): it returns early when `document.activeElement` is inside
 `#document` and is a contenteditable, input, textarea or select. Role cards
 inherit this for free.
 
@@ -750,8 +750,8 @@ of the last payload instead and skip `render()` when identical — one stringify
 per poll at this document size, and no dependence on every mutation path
 advancing the revision correctly.
 
-**Rejected for now:** the keyed reconcile helper s-kanban already has
-(`reconcileDOM(parent, dataItems, keyFn, createFn, updateFn)`, kanban.html).
+**Rejected for now:** the keyed reconcile helper s-initiative already has
+(`reconcileDOM(parent, dataItems, keyFn, createFn, updateFn)`, initiative.html).
 Copyable and proven, but it needs a `createFn`/`updateFn` pair per node type —
 five new pairs here — and a pair falling out of step is a silent bug class this
 codebase has already met. Revisit only if role cards grow state that genuinely

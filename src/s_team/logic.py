@@ -19,11 +19,11 @@ from datetime import datetime, timezone
 from sovereign import ApplicationRegistration, ProtocolNode, Session, SessionResult
 
 
-AGREEMENT_APPLICATION_ID = "agreement"
-AGREEMENT_APP_NAME = "S-Agreement"
+TEAM_APPLICATION_ID = "team"
+TEAM_APP_NAME = "S-Team"
 
 
-class AgreementLogic:
+class TeamLogic:
     def __init__(self, session: Session, config: dict | None = None,
                  collaboration=None):
         self.session = session
@@ -37,7 +37,7 @@ class AgreementLogic:
         self._memo: dict | None = None
         self.session.identity
         with self.session.lock:
-            self.session.application_metadata(AGREEMENT_APPLICATION_ID)
+            self.session.application_metadata(TEAM_APPLICATION_ID)
 
     @contextmanager
     def _reading(self):
@@ -69,7 +69,7 @@ class AgreementLogic:
 
     def application_registration(self) -> ApplicationRegistration:
         return ApplicationRegistration(
-            AGREEMENT_APPLICATION_ID,
+            TEAM_APPLICATION_ID,
             frozenset({"agreement"}),
             self.agreements,
             self.accept_agreement_invitation,
@@ -1046,7 +1046,7 @@ class AgreementLogic:
             # A subagreement invitation may already be cached and deliberately
             # unmounted because this session held nothing in an ancestor. It
             # does now.
-            self.session.mount_cached_topics(AGREEMENT_APPLICATION_ID)
+            self.session.mount_cached_topics(TEAM_APPLICATION_ID)
         return recorded
 
     def seat_agreement(
@@ -1144,7 +1144,7 @@ class AgreementLogic:
         )
         if held.status != "ok":
             return held
-        self.session.mount_cached_topics(AGREEMENT_APPLICATION_ID)
+        self.session.mount_cached_topics(TEAM_APPLICATION_ID)
         return SessionResult(
             "ok",
             value=held.value.uuid,
@@ -1482,7 +1482,7 @@ class AgreementLogic:
             # An Agreement actor is never among the people on this topic, so
             # the member test below would call every one of them a stranger.
             # Its standing is read from the answer given on its behalf.
-            is_agreement = bool(
+            is_team = bool(
                 offer and offer.data.get("actor_kind") == "agreement"
             )
             if revoked:
@@ -1490,14 +1490,14 @@ class AgreementLogic:
             elif not offer:
                 # An answer nobody offered: somebody asking to take this.
                 status = "requested"
-            elif not member and not is_agreement:
+            elif not member and not is_team:
                 status = "uninvited" if known else "unobserved"
             elif not record:
                 # For an agreement, no answer means either that nobody has
                 # given one or that whoever could is out of reach - and only
                 # its Identity holder can tell those apart.
                 status = (
-                    "unobserved" if is_agreement and not self._holds_identity_of(
+                    "unobserved" if is_team and not self._holds_identity_of(
                         actor_uuid,
                     ) else "pending"
                 )
@@ -1651,7 +1651,7 @@ class AgreementLogic:
         if root.uuid == node_uuid:
             return root
         for child in root.children:
-            if found := AgreementLogic._find_in_subtree(child, node_uuid):
+            if found := TeamLogic._find_in_subtree(child, node_uuid):
                 return found
         return None
 
@@ -2457,7 +2457,7 @@ class AgreementLogic:
 
     @staticmethod
     def _is_expired(value: str | None) -> bool:
-        normalized = AgreementLogic._normalize_expiry(value)
+        normalized = TeamLogic._normalize_expiry(value)
         if not normalized:
             return False
         parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
@@ -2708,7 +2708,7 @@ class AgreementLogic:
                 return current if (
                     parent
                     and parent.data.get("type") == "agreement_app"
-                    and parent.data.get("name") == AGREEMENT_APP_NAME
+                    and parent.data.get("name") == TEAM_APP_NAME
                 ) else None
             current = self.session.protocol.index.get(current.parent_uuid)
         return None
@@ -2716,7 +2716,7 @@ class AgreementLogic:
     @staticmethod
     def _subtree_contains(root: ProtocolNode, node_uuid: str) -> bool:
         return root.uuid == node_uuid or any(
-            AgreementLogic._subtree_contains(child, node_uuid)
+            TeamLogic._subtree_contains(child, node_uuid)
             for child in root.children
         )
 
@@ -2767,19 +2767,19 @@ class AgreementLogic:
         """
         with self.session.lock:
             return copy.deepcopy(
-                self.session.application_metadata(AGREEMENT_APPLICATION_ID),
+                self.session.application_metadata(TEAM_APPLICATION_ID),
             )
 
     def _remember_agreement(self, agreement_uuid: str) -> None:
         with self.session.lock:
             metadata = self.session.application_metadata(
-                AGREEMENT_APPLICATION_ID,
+                TEAM_APPLICATION_ID,
             )
             metadata["selected_agreement_uuid"] = agreement_uuid
 
     def _agreement_container(self) -> ProtocolNode:
         return self._folder(
-            self._apps_folder(), AGREEMENT_APP_NAME, "agreement_app",
+            self._apps_folder(), TEAM_APP_NAME, "agreement_app",
         )
 
     def _find_agreement_container(self) -> ProtocolNode | None:
@@ -2797,7 +2797,7 @@ class AgreementLogic:
             (
                 child for child in apps.live_children()
                 if child.data.get("type") == "agreement_app"
-                and child.data.get("name") == AGREEMENT_APP_NAME
+                and child.data.get("name") == TEAM_APP_NAME
             ),
             None,
         )

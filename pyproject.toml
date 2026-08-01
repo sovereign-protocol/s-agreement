@@ -3,9 +3,9 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "s-agreement"
+name = "sovereign-team"
 version = "0.2.0a2"
-description = "S-Agreement collaborative document application for Sovereign Core"
+description = "S-Team collaborative document application for Sovereign Core"
 readme = "README.md"
 requires-python = ">=3.10"
 # Apache-2.0, as every application is. It carried Core's LGPL only because it
@@ -26,9 +26,9 @@ dependencies = ["sovereign-protocol>=0.1.6,<0.2"]
 
 # A package whose argument is auditability must say where its source is.
 [project.urls]
-Homepage = "https://github.com/sovereign-protocol/s-agreement"
-Source = "https://github.com/sovereign-protocol/s-agreement"
-Issues = "https://github.com/sovereign-protocol/s-agreement/issues"
+Homepage = "https://github.com/sovereign-protocol/s-team"
+Source = "https://github.com/sovereign-protocol/s-team"
+Issues = "https://github.com/sovereign-protocol/s-team/issues"
 
 [project.optional-dependencies]
 test = ["pytest>=8,<10"]
@@ -37,17 +37,17 @@ test = ["pytest>=8,<10"]
 desktop = ["pywebview>=5,<6"]
 
 [project.scripts]
-s-agreement-desktop = "s_agreement.desktop:main"
+s-team-desktop = "s_team.desktop:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["s_agreement*"]
+include = ["s_team*"]
 
 [tool.setuptools.package-data]
-"s_agreement.assets" = ["*.css", "*.html", "*.js"]
+"s_team.assets" = ["*.css", "*.html", "*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

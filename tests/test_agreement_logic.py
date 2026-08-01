@@ -496,6 +496,38 @@ class AgreementLogicTests(unittest.TestCase):
             [child_uuid],
         )
 
+    def test_deleting_a_seated_child_empties_its_seat_and_no_more(self):
+        # A role is not a subagreement's private property: the same one may
+        # seat several actors. Deleting the agreement in it must remove its
+        # answer, not the role everybody else is holding too.
+        runtime = self.runtime(9524)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        role_uuid = runtime.logic.create_role(parent_uuid, "Delegate").value
+        runtime.logic.offer_role(role_uuid, "somebody-else")
+        child_uuid = runtime.logic.create_seated_agreement(
+            role_uuid, "Finance circle",
+        ).value
+
+        self.assertEqual(
+            runtime.logic.delete_agreement(child_uuid).status, "ok",
+        )
+
+        parent = runtime.session.protocol.index[parent_uuid]
+        role = runtime.session.protocol.index[role_uuid]
+        self.assertIn(
+            "Delegate",
+            [item.data["name"] for item in runtime.logic.roles(parent)],
+        )
+        self.assertFalse(runtime.logic._agreement_holds_role(role, child_uuid))
+        # The other holder is untouched, and the seat itself stays offered:
+        # revoking an offer is the parent's to do, not the departing child's.
+        holders = {
+            holder["actor_uuid"]: holder
+            for holder in runtime.logic.role_holders(parent, role)
+        }
+        self.assertIn("somebody-else", holders)
+        self.assertNotEqual(holders[child_uuid]["status"], "accepted")
+
     def test_reacting_resolves_a_divergence_on_a_clause(self):
         # Without reactions an agreement can reach a state it cannot leave:
         # two sides edit the same clause, both see divergence, and nothing
@@ -1791,6 +1823,47 @@ class AgreementLogicTests(unittest.TestCase):
         )
         child = runtime.session.protocol.index[child_uuid]
         self.assertEqual(len(runtime.logic.parent_holdings(child)), 1)
+
+    def test_stepping_out_of_a_seat_clears_both_sides_of_it(self):
+        runtime = self.runtime(9525)
+        parent_uuid = runtime.logic.create_agreement("Cooperative").value
+        child_uuid = runtime.logic.create_subagreement(
+            parent_uuid, "Finance circle",
+        ).value
+        parent = runtime.session.protocol.index[parent_uuid]
+        role_uuid = runtime.logic.child_agreements(parent)[0][1].uuid
+
+        stepped = runtime.logic.unseat_agreement(role_uuid, child_uuid)
+
+        # Reported as done, rather than judged by whether there was a peer to
+        # tell: an agreement nobody else has yet produces no effects at all.
+        self.assertEqual(stepped.status, "ok")
+        child = runtime.session.protocol.index[child_uuid]
+        role = runtime.session.protocol.index[role_uuid]
+        self.assertEqual(runtime.logic.parent_holdings(child), [])
+        # And the parent no longer counts it as seated, so the two sides say
+        # the same thing. The offer stands, so it can be answered again.
+        self.assertFalse(runtime.logic._agreement_holds_role(role, child_uuid))
+        offers = runtime.logic.seat_offers(child)
+        self.assertEqual(
+            [(item["role_uuid"], item["answer"]) for item in offers],
+            [(role_uuid, "")],
+        )
+        self.assertEqual(
+            runtime.logic.seat_agreement(role_uuid, child_uuid).status, "ok",
+        )
+        self.assertEqual(
+            runtime.logic.home_parent_uuid(
+                runtime.session.protocol.index[child_uuid],
+            ),
+            parent_uuid,
+        )
+        # Twice over is not an error the second time round, it is a fact:
+        # there is no seat here to give up.
+        runtime.logic.unseat_agreement(role_uuid, child_uuid)
+        repeated = runtime.logic.unseat_agreement(role_uuid, child_uuid)
+        self.assertEqual(repeated.status, "error")
+        self.assertIn("does not hold that role", repeated.reason)
 
     def test_only_the_agreements_identity_holder_answers_for_it(self):
         host = self.runtime(9502)

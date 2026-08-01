@@ -473,18 +473,12 @@ class AgreementLogic:
                 dropped = self.session.delete(holding.uuid)
                 if dropped.status == "ok":
                     effects.extend(dropped.effects)
-        # And this agreement's own seats elsewhere go with it, so no parent
-        # is left holding a role nobody can fill.
+        # And the answers given on this agreement's behalf elsewhere go with
+        # it, so no parent is left showing a seat filled by something that is
+        # gone from here. Its own side of each seat needs no separate delete:
+        # the holdings are inside the subtree about to go.
         for holding in self.parent_holdings(agreement):
-            role = self._node(
-                str(holding.data.get("role_uuid") or "").strip(),
-                "agreement_role",
-            )
-            if not role:
-                continue
-            removed = self.session.delete(role.uuid)
-            if removed.status == "ok":
-                effects.extend(removed.effects)
+            effects.extend(self._release_seat(agreement, holding))
         release = self.session.end_topic_sharing(agreement.uuid)
         result = self.session.delete(agreement.uuid)
         if result.status != "ok":
@@ -1205,7 +1199,13 @@ class AgreementLogic:
     def unseat_agreement(
         self, role_uuid: str, agreement_uuid: str,
     ) -> SessionResult:
-        """Give up a seat, from the seated agreement's side."""
+        """Give up a seat, from the seated agreement's side.
+
+        Both records go, because a holding is live only while both exist:
+        dropping this side alone would leave the parent still showing the seat
+        as accepted while the agreement no longer claims it, and neither view
+        is wrong on its own - they simply contradict each other.
+        """
         seated = self._node(agreement_uuid, "agreement")
         if not seated:
             return SessionResult("error", reason="agreement not found")
@@ -1214,16 +1214,43 @@ class AgreementLogic:
                 "error",
                 reason="only its Identity holder can give up that seat",
             )
+        held = [
+            holding for holding in self.parent_holdings(seated)
+            if holding.data.get("role_uuid") == role_uuid
+        ]
+        # Whether the seat was held is read from the holdings themselves. An
+        # unshared agreement produces no effects at all, so counting those
+        # would call every offline release a failure.
+        if not held:
+            return SessionResult("error", reason="it does not hold that role")
         effects = []
-        for holding in self.parent_holdings(seated):
-            if holding.data.get("role_uuid") != role_uuid:
-                continue
+        for holding in held:
+            effects.extend(self._release_seat(seated, holding))
             dropped = self.session.delete(holding.uuid)
             if dropped.status == "ok":
                 effects.extend(dropped.effects)
-        if not effects:
-            return SessionResult("error", reason="it does not hold that role")
         return SessionResult("ok", effects=effects)
+
+    def _release_seat(
+        self, seated: ProtocolNode, holding: ProtocolNode,
+    ) -> list:
+        """Withdraw the answer written in the parent for one seat.
+
+        The Agreement actor's resign_role: the only record this side wrote up
+        there is the acceptance, so that is all that goes. The role and the
+        offer are the parent's, and a role may seat several actors at once -
+        deleting it to empty one seat would take everybody else's with it.
+        Leaving the offer standing makes the seat unfilled rather than never
+        offered, which is what lets it be answered again.
+        """
+        role = self._node(
+            str(holding.data.get("role_uuid") or "").strip(), "agreement_role",
+        )
+        decision = self._role_decision_for(role, seated.uuid) if role else None
+        if not decision:
+            return []
+        removed = self.session.delete(decision.uuid)
+        return list(removed.effects) if removed.status == "ok" else []
 
     def move_parent_holding(
         self, holding_uuid: str, index: int,

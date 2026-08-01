@@ -102,29 +102,6 @@
       return element;
     };
 
-    // A one-line composer replaces prompt(): it stays in the document flow,
-    // so adding a clause reads as writing one.
-    const composer = (label, submit) => {
-      const row = document.createElement('div');
-      row.className = 'composer';
-      const input = document.createElement('input');
-      input.placeholder = label;
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = 'Add';
-      const send = async () => {
-        const value = input.value.trim();
-        if (!value) return;
-        input.value = '';
-        try { await submit(value); await load(); }
-        catch (error) { showToast(error.message, true); }
-      };
-      input.onkeydown = (event) => { if (event.key === 'Enter') send(); };
-      button.onclick = send;
-      row.append(input, button);
-      return row;
-    };
-
     // One row shape for every level of the document:
     //   left   [status] name/text
     //   right  [add subelement]  and, on hover, [react] [delete]
@@ -132,7 +109,7 @@
     // so hiding it is right; reacting is the only way out of a divergence,
     // and an exit you cannot see is not an exit. It appears whenever there
     // is something to react to and stays hidden otherwise.
-    const elementRow = ({node, tag, field, rename, addLabel, onAdd, onDelete,
+    const elementRow = ({node, tag, field, rename, addControl, onDelete,
                          deleteTitle, deleteMessage, index, count, onMove,
                          toggle, proposed = false, interactive = true}) => {
       const row = document.createElement('div');
@@ -185,15 +162,7 @@
         actions.append(up, down);
       }
 
-      if (interactive && onAdd) {
-        const add = document.createElement('button');
-        add.type = 'button';
-        add.className = 'element-add';
-        add.textContent = addLabel;
-        add.title = addLabel;
-        add.onclick = onAdd;
-        actions.append(add);
-      }
+      if (interactive && addControl) actions.append(addControl);
 
       if (interactive
           && transition
@@ -403,40 +372,25 @@
     // only one that acts: a badge is taken or stepped out of by clicking it.
     // Everybody else's badges are a statement of where they stand, not a
     // control over them.
-    const ACTOR_MARK = {individual: '\u{1F464}', agreement: '\u{1F465}'};
-
     // A picture where there is one, an initial for a person without, the
     // group mark for an agreement. Shared, so an actor looks the same
     // wherever it is drawn.
     const avatarFor = (person) => {
-      if (person.picture) {
-        const image = document.createElement('img');
-        image.className = 'acceptance-avatar';
-        image.src = person.picture;
-        image.alt = '';
-        return image;
+      if (person.actor_kind === 'agreement') {
+        return SovereignUI.entityBadge({
+          kind: 'agreement', compact: true,
+          className: 'acceptance-avatar', title: person.name || 'Agreement',
+        });
       }
-      const mark = document.createElement('span');
-      mark.className = 'acceptance-avatar acceptance-initials';
-      mark.dataset.kind = person.actor_kind || 'individual';
-      mark.textContent = person.actor_kind === 'agreement'
-        ? ACTOR_MARK.agreement
-        : (person.name || '?').trim().slice(0, 1).toUpperCase();
-      return mark;
+      return SovereignUI.avatar(person, {
+        className: 'acceptance-avatar',
+        self: Boolean(person.is_self),
+      });
     };
 
     const renderParticipants = (participants, identity, interactive) => {
-      const section = document.createElement('section');
+      const section = document.createElement('div');
       section.className = 'acceptance-panel';
-      const heading = document.createElement('div');
-      heading.className = 'acceptance-heading';
-      const title = document.createElement('h3');
-      title.textContent = 'Actors';
-      const reference = document.createElement('p');
-      reference.textContent =
-        'Each role is accepted against a version of this agreement.';
-      heading.append(title, reference);
-      section.append(heading);
 
       // Identity is a role like any other here, drawn with a key so it can
       // be told apart at a glance.
@@ -450,12 +404,12 @@
       };
 
       const badgeElement = (role, actionable) => {
-        const chip = document.createElement('button');
-        chip.type = 'button';
-        chip.className = 'role-chip';
-        chip.dataset.status = role.status;
+        const chip = SovereignUI.entityBadge({
+          kind: 'role', label: role.name, status: role.status,
+          icon: role.identity ? '🔑' : '◇', interactive: true,
+          className: 'role-chip',
+        });
         if (role.identity) chip.dataset.identity = 'true';
-        chip.textContent = role.identity ? `\u{1F511} ${role.name}` : role.name;
         const label = HOLDER_STATUS[role.status] || role.status;
         if (!actionable || role.identity) {
           chip.disabled = true;
@@ -516,7 +470,6 @@
       const ownRow = () => {
         const seats = payloadState.parents || [];
         const offers = payloadState.seat_offers || [];
-        if (!seats.length && !offers.length) return null;
         const row = document.createElement('div');
         row.className = 'participant is-agreement';
         row.append(avatarFor({actor_kind: 'agreement'}));
@@ -533,6 +486,12 @@
           chips.append(seatChip(seat, index, seats.length, mine));
         }
         for (const offer of offers) chips.append(offerChip(offer, mine));
+        if (!seats.length && !offers.length) {
+          const none = document.createElement('span');
+          none.className = 'participant-observer';
+          none.textContent = 'holds no role elsewhere';
+          chips.append(none);
+        }
         body.append(name, chips);
         row.append(body);
         return row;
@@ -540,11 +499,12 @@
 
       // Held. Clicking steps out of it, the way your own accepted badge does.
       const seatChip = (seat, index, total, mine) => {
-        const chip = document.createElement('button');
-        chip.type = 'button';
-        chip.className = 'role-chip';
-        chip.dataset.status = seat.live ? 'accepted' : 'outdated';
-        chip.textContent = `${seat.role_name || 'Role'} in ${seat.title}`;
+        const badgeLabel = `${seat.role_name || 'Role'} in ${seat.title}`;
+        const chip = SovereignUI.entityBadge({
+          kind: 'role', label: badgeLabel,
+          status: seat.live ? 'accepted' : 'outdated',
+          interactive: true, className: 'role-chip',
+        });
         // Home is where the organisation draws it, and home is the first
         // seat in order that works - so the order is the only control there
         // is, and it lives on the badges themselves.
@@ -553,10 +513,10 @@
           : (seat.live ? 'also held here' : 'not reachable from here');
         if (!mine) {
           chip.disabled = true;
-          chip.title = `${chip.textContent} — ${place}`;
+          chip.title = `${badgeLabel} — ${place}`;
           return chip;
         }
-        chip.title = `${chip.textContent} — ${place}. Click to step out.`;
+        chip.title = `${badgeLabel} — ${place}. Click to step out.`;
         chip.onclick = async () => {
           chip.disabled = true;
           try {
@@ -571,7 +531,7 @@
         };
         if (index > 0 && total > 1) {
           const prefer = document.createElement('span');
-          prefer.className = 'chip-action';
+          prefer.className = 'chip-action ui-entity-action';
           prefer.textContent = '↑';
           prefer.title = `Draw this agreement under ${seat.title}`;
           prefer.onclick = async event => {
@@ -589,27 +549,28 @@
 
       // Offered. Clicking takes it, the way your own pending badge does.
       const offerChip = (offer, mine) => {
-        const chip = document.createElement('button');
-        chip.type = 'button';
-        chip.className = 'role-chip';
-        chip.dataset.status = offer.answer === 'refused' ? 'refused' : 'pending';
-        chip.textContent = `${offer.role_name} in ${offer.title}`;
+        const badgeLabel = `${offer.role_name} in ${offer.title}`;
+        const chip = SovereignUI.entityBadge({
+          kind: 'role', label: badgeLabel,
+          status: offer.answer === 'refused' ? 'refused' : 'pending',
+          interactive: true, className: 'role-chip',
+        });
         const label = offer.answer === 'refused'
           ? 'turned down' : 'offered, not yet taken';
         if (offer.circular) {
           chip.disabled = true;
           chip.dataset.status = 'expired';
-          chip.title = `${chip.textContent} — ${offer.title} already sits`
+          chip.title = `${badgeLabel} — ${offer.title} already sits`
             + ' below this agreement, so taking it would make the'
             + ' organisation circular.';
           return chip;
         }
         if (!mine) {
           chip.disabled = true;
-          chip.title = `${chip.textContent} — ${label}`;
+          chip.title = `${badgeLabel} — ${label}`;
           return chip;
         }
-        chip.title = `${chip.textContent} — ${label}. Click to take it.`;
+        chip.title = `${badgeLabel} — ${label}. Click to take it.`;
         chip.onclick = async () => {
           chip.disabled = true;
           try {
@@ -627,7 +588,7 @@
         // simply taking or leaving a role, so it is the one extra mark.
         if (offer.answer !== 'refused') {
           const decline = document.createElement('span');
-          decline.className = 'chip-action';
+          decline.className = 'chip-action ui-entity-action';
           decline.textContent = '×';
           decline.title = `Decline ${offer.role_name} in ${offer.title}`;
           decline.onclick = async event => {
@@ -647,15 +608,10 @@
       const people = participants || [];
       const me = people.find(person => person.is_self);
       const others = people.filter(person => !person.is_self);
-      if (me) section.append(rowFor(me, interactive));
       const own = ownRow();
-      if (own) section.append(own);
-      if (others.length) {
-        const rest = document.createElement('div');
-        rest.className = 'acceptance-badges';
-        for (const person of others) rest.append(rowFor(person, false));
-        section.append(rest);
-      }
+      section.append(own);
+      if (me) section.append(rowFor(me, interactive));
+      for (const person of others) section.append(rowFor(person, false));
       return section;
     };
     const findDisplayedNode = (uuid) => {
@@ -678,7 +634,7 @@
     // UI state that holds no focus, so the edit guard in render() cannot
     // protect it and a rebuild would close it. Kept here rather than in the
     // DOM so a full re-render restores it instead of destroying it.
-    const ephemeral = {openMenu: ''};
+    const ephemeral = {openMenu: '', disclosures: null};
 
     // Identity is one line, not a panel: it says who speaks for this
     // agreement and gets out of the way. Taking it from somebody is real but
@@ -930,9 +886,15 @@
           }));
         });
         if (interactive) {
-          column.append(composer(add, async text => {
-            await api('/api/agreement/roles/items/create',
-              {role_uuid: role.uuid, kind, text});
+          column.append(SovereignUI.addComposer({
+            noun: kind,
+            placeholder: add,
+            onSubmit: async text => {
+              await api('/api/agreement/roles/items/create',
+                {role_uuid: role.uuid, kind, text});
+              await load();
+            },
+            onError: error => showToast(error.message, true),
           }));
         }
         columns.append(column);
@@ -947,9 +909,12 @@
       const holders = (payloadState.role_holders || {})[role.uuid] || [];
       const held = document.createElement('div');
       held.className = 'role-holders';
+      const heldHeading = document.createElement('div');
+      heldHeading.className = 'role-holders-heading';
       const heldTitle = document.createElement('h5');
       heldTitle.textContent = 'Held by';
-      held.append(heldTitle);
+      heldHeading.append(heldTitle);
+      held.append(heldHeading);
       if (!holders.length) {
         const none = document.createElement('p');
         none.className = 'role-unheld';
@@ -963,14 +928,17 @@
       const badges = document.createElement('div');
       badges.className = 'holder-badges';
       for (const holder of holders) {
-        const badge = document.createElement('span');
-        badge.className = 'holder-badge';
-        badge.dataset.status = holder.status;
+        const kind = holder.actor_kind === 'agreement' ? 'agreement' : 'person';
+        const badge = SovereignUI.entityBadge({
+          kind,
+          person: holder,
+          label: holder.is_self ? 'You' : holder.name,
+          status: holder.status,
+          self: Boolean(holder.is_self),
+          className: 'holder-badge',
+        });
         badge.dataset.actorKind = holder.actor_kind;
-        const name = document.createElement('span');
-        name.className = 'holder-name';
-        name.textContent = holder.is_self ? 'You' : holder.name;
-        badge.append(avatarFor(holder), name);
+        badge.querySelector('.ui-entity-label').classList.add('holder-name');
 
         const detail = [HOLDER_STATUS[holder.status] || holder.status];
         if (holder.status === 'unobserved') {
@@ -1025,7 +993,7 @@
         if (mine && holder.status === 'requested' && !holder.is_self) {
           const confirm = document.createElement('button');
           confirm.type = 'button';
-          confirm.className = 'holder-action';
+          confirm.className = 'holder-action ui-entity-action';
           confirm.textContent = '✓';
           confirm.title = `Confirm ${holder.name} in ${role.data.name}`;
           confirm.onclick = async event => {
@@ -1041,7 +1009,7 @@
         } else if (mine && holder.status !== 'revoked') {
           const revoke = document.createElement('button');
           revoke.type = 'button';
-          revoke.className = 'holder-action';
+          revoke.className = 'holder-action ui-entity-action';
           revoke.textContent = '×';
           revoke.title = `Withdraw ${holder.name}'s offer of ${role.data.name}`;
           revoke.onclick = event => {
@@ -1117,7 +1085,7 @@
               await load();
             } catch (error) { showToast(error.message, true); }
           };
-          held.append(picker);
+          heldHeading.append(picker);
         }
       }
       card.append(held);
@@ -1128,17 +1096,13 @@
     // rather than in a side panel, because a role is part of what people
     // accept - but as cards rather than prose, because they are structured.
     const renderRoles = (agreement, interactive) => {
-      const section = document.createElement('section');
+      const section = document.createElement('div');
       section.className = 'roles';
-      const sectionHeading = document.createElement('div');
-      sectionHeading.className = 'roles-heading';
-      const title = document.createElement('h3');
-      title.textContent = 'Role Definitions & Invitations';
       const explanation = document.createElement('p');
+      explanation.className = 'section-intro';
       explanation.textContent =
         'What this agreement expects, and who has been invited to it.';
-      sectionHeading.append(title, explanation);
-      section.append(sectionHeading);
+      section.append(explanation);
 
       const roles = displayedChildren(agreement, 'agreement_role');
       const rolesHaveProposals = roles.some(entry => entry.proposed);
@@ -1159,9 +1123,15 @@
         section.append(empty);
       }
       if (interactive) {
-        section.append(composer('New role name', async name => {
-          await api('/api/agreement/roles/create',
-            {agreement_uuid: agreement.uuid, name});
+        section.append(SovereignUI.addComposer({
+          noun: 'role',
+          placeholder: 'Role name',
+          onSubmit: async name => {
+            await api('/api/agreement/roles/create',
+              {agreement_uuid: agreement.uuid, name});
+            await load();
+          },
+          onError: error => showToast(error.message, true),
         }));
       }
       return section;
@@ -1213,35 +1183,43 @@
       article.classList.toggle('is-readonly', !currentInteractionAllowed);
       if (!current) { SovereignShell.refresh(); return; }
 
-      // The text collapses behind a caret on the title itself. Built before
-      // the title row so the caret has something to fold, and filled after.
-      const content = document.createElement('section');
-      content.className = 'content';
-      const contentOpen = ephemeral.contentCollapsed !== current.uuid;
-      content.classList.toggle('is-collapsed', !contentOpen);
+      if (!ephemeral.disclosures
+          || ephemeral.disclosures.agreementUuid !== current.uuid) {
+        ephemeral.disclosures = {
+          agreementUuid: current.uuid,
+          document: true,
+          actors: false,
+          roles: false,
+        };
+      }
+      const disclosure = (title, key) => SovereignUI.disclosure(title, {
+        expanded: ephemeral.disclosures[key],
+        onToggle: open => { ephemeral.disclosures[key] = open; },
+      });
 
-      article.append(elementRow({
+      const documentPart = disclosure('Agreement document', 'document');
+      const content = document.createElement('div');
+      content.className = 'content';
+      documentPart.content.append(elementRow({
         node: current,
         tag: 'h2',
         field: 'title',
         rename: value => api('/api/agreement/agreements/rename',
           {agreement_uuid: current.uuid, title: value}),
-        addLabel: '+ Section',
-        onAdd: async () => {
-          try {
-            await api('/api/agreement/sections/create',
-              {agreement_uuid: current.uuid, title: 'Untitled section'});
-            await load();
-          } catch (error) { showToast(error.message, true); }
-        },
-        toggle: {
-          expanded: contentOpen,
-          onToggle: open => {
-            ephemeral.contentCollapsed = open ? '' : current.uuid;
-            content.classList.toggle('is-collapsed', !open);
-          },
-        },
         interactive: currentInteractionAllowed,
+        addControl: currentInteractionAllowed
+          ? SovereignUI.addComposer({
+            noun: 'section',
+            placeholder: 'Section title',
+            className: 'element-add-control',
+            onSubmit: async title => {
+              await api('/api/agreement/sections/create',
+                {agreement_uuid: current.uuid, title});
+              await load();
+            },
+            onError: error => showToast(error.message, true),
+          })
+          : null,
       }));
       if (!currentInteractionAllowed) {
         const notice = document.createElement('p');
@@ -1250,16 +1228,7 @@
           payload.interaction?.reason
           || 'This subagreement is visible but read-only.'
         );
-        article.append(notice);
-      }
-      // Identity normally reads as a badge on whoever holds it, so the
-      // line only appears when it needs attention: contested, recorded
-      // twice, vacant, or held by somebody else and therefore takeable.
-      const identityState = payload.identity || {state: 'vacant'};
-      if (!(identityState.state === 'held'
-            && identityState.is_self
-            && !(identityState.claims || []).length)) {
-        article.append(renderIdentity(identityState, currentInteractionAllowed));
+        documentPart.content.append(notice);
       }
       const sections = displayedChildren(current, 'agreement_section');
       const sectionsHaveProposals = sections.some(entry => entry.proposed);
@@ -1275,14 +1244,19 @@
             '/api/agreement/sections/rename',
             {section_uuid: section.uuid, title: value},
           ),
-          addLabel: '+ Clause',
-          onAdd: proposed ? null : async () => {
-            try {
-              await api('/api/agreement/clauses/create',
-                {section_uuid: section.uuid, text: 'New clause'});
-              await load();
-            } catch (error) { showToast(error.message, true); }
-          },
+          addControl: !proposed && currentInteractionAllowed
+            ? SovereignUI.addComposer({
+              noun: 'clause',
+              placeholder: 'Clause text',
+              className: 'element-add-control',
+              onSubmit: async text => {
+                await api('/api/agreement/clauses/create',
+                  {section_uuid: section.uuid, text});
+                await load();
+              },
+              onError: error => showToast(error.message, true),
+            })
+            : null,
           onDelete: proposed ? null : async () => {
             try {
               await api('/api/agreement/sections/delete', {section_uuid: section.uuid});
@@ -1338,11 +1312,26 @@
         });
         content.append(block);
       });
-      article.append(content);
-      article.append(renderParticipants(
+      documentPart.content.append(content);
+
+      const actorsPart = disclosure('Actors', 'actors');
+      actorsPart.content.append(renderParticipants(
         payload.participants, payload.identity, currentInteractionAllowed,
       ));
-      article.append(renderRoles(current, currentInteractionAllowed));
+      // Identity normally reads as a badge on whoever holds it, so the line
+      // only appears separately when it needs attention.
+      const identityState = payload.identity || {state: 'vacant'};
+      if (!(identityState.state === 'held'
+            && identityState.is_self
+            && !(identityState.claims || []).length)) {
+        actorsPart.content.append(
+          renderIdentity(identityState, currentInteractionAllowed),
+        );
+      }
+
+      const rolesPart = disclosure('Roles', 'roles');
+      rolesPart.content.append(renderRoles(current, currentInteractionAllowed));
+      article.append(documentPart.section, actorsPart.section, rolesPart.section);
       SovereignShell.refresh();
     };
 

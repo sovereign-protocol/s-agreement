@@ -52,13 +52,10 @@ header {
   padding: 10px 24px;
 }
 article { background: var(--panel); color: var(--text); padding: 32px 48px; border-radius: 8px; }
-/* Two rules on the page and no more: one between what the agreement says and
-   who is in it, one between who is in it and what it expects of them. Those
-   are the seams that matter, and a rule on every section drew a line between
-   each pair of paragraphs instead. */
 section { padding: 6px 0; }
-#document > .acceptance-panel,
-#document > .roles { border-top: 1px solid var(--line); }
+#document > .ui-disclosure { padding: 7px 0; }
+#document > .ui-disclosure > .ui-disclosure-toggle { margin-left: 4px; }
+#document > .ui-disclosure > .ui-disclosure-content { padding-top: 3px; }
 button, select { padding: 8px 11px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--text); }
 .document-pane { min-width: 0; }
 
@@ -178,45 +175,14 @@ h2.element-label { margin: 0 0 4px; }
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.acceptance-panel { margin: 10px 0 6px; padding: 8px 4px; }
-.acceptance-heading {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin: 0 4px 6px 22px;
-}
-.acceptance-heading h3 { margin: 0; font-size: 12px; }
-.acceptance-heading p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 10px;
-}
-.acceptance-badges {
-  display: flex;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
-  gap: 5px;
-  min-width: 0;
-}
-.acceptance-avatar {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  object-fit: cover;
-  background: var(--page);
-}
-.acceptance-initials {
-  display: grid;
-  place-items: center;
-  color: var(--text);
-  font-size: 10px;
-  font-weight: 700;
-}
+.acceptance-panel { margin: 0 0 6px; padding: 3px 4px 8px; }
+.section-intro { margin: 0 4px 7px 22px; color: var(--text-muted); font-size: 11px; }
 .acceptance-body {
   min-width: 0;
-  display: inline-flex;
-  align-items: baseline;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
 }
 .acceptance-body strong {
   overflow: hidden;
@@ -246,12 +212,16 @@ h2.element-label { margin: 0 0 4px; }
   border-radius: 5px;
   cursor: pointer;
 }
-.element-add {
-  background: none;
-  border: 1px solid var(--line);
-  color: var(--text-muted);
+.element-add-control {
+  margin: 0;
   opacity: 0;
+  transition: opacity 0.12s ease;
 }
+.element-add-control .ui-add-trigger {
+  background: none;
+  color: var(--text-muted);
+}
+.element-add-control .ui-inline-composer input { width: 180px; }
 /* Reacting is the only way out of a divergence, so it is never hidden behind
    hover - it simply does not exist while there is nothing to react to.
    It used to be a dark chip standing out from a light page; on a dark page
@@ -280,17 +250,12 @@ h2.element-label { margin: 0 0 4px; }
   opacity: 0;
 }
 .element-move:disabled { opacity: 0; cursor: default; }
-.element-row:hover .element-add,
+.element-row:hover .element-add-control,
 .element-row:hover .element-delete,
 .element-row:hover .element-move:not(:disabled),
-.element-add:focus-visible,
+.element-add-control:focus-within,
 .element-delete:focus-visible,
 .element-move:focus-visible { opacity: 1; }
-/* Hiding "+ Section" until hover is fine beside existing sections and wrong
-   on an agreement that has none: the document then looks empty with no
-   visible way in. Starting to write is the primary action here, not a
-   destructive one, so on the agreement's own row it always shows. */
-#document > .element-row .element-add { opacity: 1; }
 
 .editable { border-radius: 4px; padding: 2px 4px; margin-left: -4px; cursor: text; }
 .editable:hover { background: var(--hover); }
@@ -300,35 +265,23 @@ h2.element-label { margin: 0 0 4px; }
    what being part of an agreement means. Somebody present who holds nothing
    is shown, and shown to be outside. */
 .participant {
-  display: flex;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
   align-items: center;
   gap: 9px;
-  padding: 4px 0;
-}
-/* Two lines act: yours, and this agreement's own - it is an actor like any
-   other, so the roles it holds elsewhere are badges here rather than a
-   separate idea with a section of its own. Everybody else's line states. */
-.participant.is-self,
-.participant.is-agreement {
   padding: 7px 8px;
   margin: 0 0 6px 0;
   border-radius: 8px;
   background: var(--hover);
 }
-.acceptance-avatar[data-kind="agreement"] { letter-spacing: -1px; }
 .participant-roles {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 2px;
+  min-width: 0;
 }
 .role-chip {
   font-size: 11px;
-  padding: 2px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: transparent;
-  color: var(--text-muted);
   font-family: inherit;
 }
 /* Your own badges are the control: click to take a role or step out of it.
@@ -352,16 +305,6 @@ h2.element-label { margin: 0 0 4px; }
 }
 .role-chip:hover .chip-action { opacity: 0.75; }
 .chip-action:hover { opacity: 1; }
-.role-chip[data-identity="true"] {
-  border-color: var(--text-muted);
-  color: var(--text);
-}
-.role-chip[data-status="accepted"] {
-  border-color: var(--proposal);
-  color: var(--proposal);
-}
-.role-chip[data-status="outdated"],
-.role-chip[data-status="expired"] { border-color: #f59e0b; color: #f59e0b; }
 .role-chip[data-status="refused"] { text-decoration: line-through; }
 .role-chip[data-status="unobserved"] { font-style: italic; opacity: 0.6; }
 .participant-observer { font-size: 12px; color: var(--text-muted); }
@@ -410,15 +353,7 @@ h2.element-label { margin: 0 0 4px; }
    they are still part of what is being accepted, not an admin panel bolted
    to the side. --hover is a translucent overlay, so one card style lifts off
    --panel in both themes. */
-.roles { margin: 18px 0 10px; padding: 14px 4px 12px; }
-.roles-heading {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin: 0 4px 6px 22px;
-}
-.roles-heading h3 { margin: 0; font-size: 14px; }
-.roles-heading p { margin: 0; color: var(--text-muted); font-size: 12px; }
+.roles { margin: 0 0 10px; padding: 3px 4px 8px; }
 .roles-empty {
   margin: 6px 4px 8px 22px;
   color: var(--text-muted);
@@ -463,8 +398,16 @@ h2.element-label { margin: 0 0 4px; }
 .role-column .element-label { margin: 3px 0; font-size: 13px; }
 
 .role-holders { margin: 12px 0 0 22px; }
-.role-holders h5 {
+.role-holders-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 32px;
   margin: 0 0 4px;
+}
+.role-holders h5 {
+  margin: 0;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -480,27 +423,10 @@ h2.element-label { margin: 0 0 4px; }
    badge looks, using the same vocabulary as the participant chips. */
 .holder-badges { display: flex; flex-wrap: wrap; gap: 6px; }
 .holder-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 9px 2px 3px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 12px;
   cursor: help;
 }
-.holder-badge .acceptance-avatar { width: 18px; height: 18px; }
 .holder-name { font-weight: 600; }
-.holder-badge[data-status="accepted"] {
-  border-color: var(--proposal);
-  color: var(--proposal);
-}
-.holder-badge[data-status="expired"],
-.holder-badge[data-status="outdated"] { border-color: #f59e0b; color: #f59e0b; }
-.holder-badge[data-status="requested"] { border-style: dashed; border-color: var(--proposal); }
 .holder-badge[data-status="refused"] .holder-name { text-decoration: line-through; }
-.holder-badge[data-status="refused"],
-.holder-badge[data-status="revoked"] { opacity: 0.6; }
 /* Not styled like "pending": this is "I cannot see", not "they have not
    answered", and the two must not read as the same thing. */
 .holder-badge[data-status="unobserved"] { font-style: italic; opacity: 0.65; }
@@ -523,17 +449,31 @@ h2.element-label { margin: 0 0 4px; }
 .holder-badge:hover .holder-action,
 .holder-badge:focus-within .holder-action { opacity: 0.75; }
 .holder-action:hover { opacity: 1; }
-.role-offer-picker { font-size: 12px; padding: 2px 6px; margin-top: 6px; }
+.role-offer-picker {
+  box-sizing: border-box;
+  min-height: 28px;
+  max-width: min(260px, 100%);
+  padding: 3px 28px 3px 8px;
+  border: 1px solid var(--line);
+  background-color: var(--panel);
+  color: var(--text);
+  color-scheme: inherit;
+  font-size: 12px;
+}
+.role-offer-picker option,
+.role-offer-picker optgroup {
+  background: var(--panel);
+  color: var(--text);
+}
 
 .role-answer-prompt { flex: 1; min-width: 0; }
 
 @media (max-width: 780px) {
+  .acceptance-body { grid-template-columns: 120px minmax(0, 1fr); }
   .role-columns { grid-template-columns: 1fr; }
   main { grid-template-columns: 1fr; padding: 12px; }
   #organization { position: static; }
   article { padding: 24px 20px; }
-  .acceptance-heading { display: block; }
-  .acceptance-heading p { margin-top: 4px; }
 }
 
 /* A seat home leaves out still has to be visible in the tree. */

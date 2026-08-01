@@ -12,7 +12,7 @@ before it is true, so the adoption step is the point rather than an obstacle.
 
 ## Quickstart
 
-Requires Python 3.10+ and Sovereign Core `>=0.1.1,<0.2`.
+Requires Python 3.10+ and Sovereign Core `>=0.1.5,<0.2`.
 
 ```powershell
 python -m venv .venv
@@ -25,24 +25,30 @@ folder and SFTP mailbox channels are configured through relay targets.
 
 ## Organizations
 
-Agreements can contain subagreements, forming an organizational tree. Each
-subagreement is still an independent shared topic:
+Taking part in an agreement means holding a role in it. A role carries its
+accountabilities and domains, and is held only while two records stand
+together: an offer written by whoever holds the agreement's Identity, and the
+actor's own answer. An offer alone is an unfilled seat; an answer alone is
+somebody asking to take one.
 
-- the parent participants explicitly accept the organizational link;
-- the subagreement participants separately accept their invitation; and
-- joining a parent never grants access to a child;
+An actor is a person *or an agreement*, which is what makes an organization.
+A subagreement is an agreement holding a role in its parent, so:
+
+- the parent side is an ordinary role, offered and answered like any other;
+- the subagreement participants separately accept their own invitation;
+- joining a parent never grants access to a child; and
 - every ancestor must have a current, unexpired acceptance before a child
   invitation can be mounted.
 
-This permits a broad organization agreement with smaller circles, teams, or
-roles beneath it, each shared only with its own participants. The organization
-panel shows the agreements available locally and marks child agreements that
-have separate membership.
+An agreement may hold seats in more than one parent. The organization panel
+draws it under the first seat that reaches a root, names the others on it, and
+marks child agreements that have separate membership.
 
-Each participant's acceptance or refusal is stored as its own agreement node.
-It records the decision time, optional expiration (infinite by default), and a
-SHA-256 reference to the exact agreement content. A content change makes older
-acceptances visibly outdated until that participant renews them.
+Each answer is stored as its own agreement node recording the decision time,
+optional expiration (infinite by default), and a SHA-256 reference to the
+document body plus that role's own definition. A content change makes older
+acceptances visibly outdated until that participant renews them — scoped to the
+role, so editing one role does not re-open everybody else's acceptance.
 
 ## Desktop window
 

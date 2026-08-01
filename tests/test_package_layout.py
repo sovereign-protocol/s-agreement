@@ -207,14 +207,28 @@ class AssetTests(unittest.TestCase):
     def test_participants_are_listed_by_the_roles_they_hold(self):
         for marker in (
             "acceptance-avatar",
-            "person.picture",
+            "SovereignUI.avatar(person",
             "role-chip",
             "holds no role here",
+            "holds no role elsewhere",
             # Identity reads as a role like any other, told apart by a key.
             "role.identity ?",
             "Identity",
         ):
             self.assertIn(marker, self.agreement)
+
+    def test_actor_rows_start_with_the_agreement_then_you_then_others(self):
+        ordering = self.agreement.split("const people = participants || [];", 1)[1]
+        ordering = ordering.split("return section;", 1)[0]
+        own = ordering.index("section.append(own)")
+        me = ordering.index("section.append(rowFor(me, interactive))")
+        others = ordering.index("section.append(rowFor(person, false))")
+        self.assertLess(own, me)
+        self.assertLess(me, others)
+        self.assertNotIn(
+            "if (!seats.length && !offers.length) return null",
+            self.agreement,
+        )
 
     def test_only_your_own_badges_act(self):
         # Somebody else's standing is a statement, not a control over
@@ -257,7 +271,8 @@ class AssetTests(unittest.TestCase):
         # version and who offered it are one holder's details, so they belong
         # in the tooltip rather than in columns nobody reads across.
         self.assertIn("holder-badges", self.agreement)
-        self.assertIn("avatarFor(holder)", self.agreement)
+        self.assertIn("const badge = SovereignUI.entityBadge({", self.agreement)
+        self.assertIn("className: 'holder-badge'", self.agreement)
         self.assertIn("badge.title", self.agreement)
 
     def test_an_agreement_holds_roles_the_way_a_person_does(self):
@@ -271,11 +286,16 @@ class AssetTests(unittest.TestCase):
         for gone in ("renderSeats", "renderSeatOffers", "seat-offer", "Seats held"):
             self.assertNotIn(gone, self.agreement)
 
-    def test_the_agreement_text_collapses_from_the_title(self):
-        # A caret after the name and nothing else: what it folds is directly
-        # below it, so a label would only repeat the page.
-        self.assertIn("element-toggle", self.agreement)
-        self.assertNotIn("content-toggle", self.agreement)
+    def test_the_three_agreement_parts_use_shared_disclosures(self):
+        for title, key in (
+            ("Agreement document", "document"),
+            ("Actors", "actors"),
+            ("Roles", "roles"),
+        ):
+            self.assertIn(f"disclosure('{title}', '{key}')", self.agreement)
+        self.assertIn("document: true", self.agreement)
+        self.assertIn("actors: false", self.agreement)
+        self.assertIn("roles: false", self.agreement)
 
     def test_copying_an_agreement_is_not_offered_on_its_own_page(self):
         # Starting a new agreement from this one is a choice made where a new
@@ -283,23 +303,40 @@ class AssetTests(unittest.TestCase):
         self.assertNotIn("state-duplicate", self.agreement)
         self.assertNotIn("agreements/clone", self.agreement)
 
-    def test_the_page_carries_two_rules_and_the_state_line_is_gone(self):
-        # One rule between what the agreement says and who is in it, one
-        # between who is in it and what it expects of them. A rule on every
-        # section drew a line between each pair of paragraphs instead.
+    def test_the_page_uses_shared_add_controls_and_has_no_state_line(self):
         css = files("s_agreement.assets").joinpath(
             "agreement.css",
         ).read_text(encoding="utf-8")
-        self.assertIn(
-            "#document > .acceptance-panel,\n#document > .roles"
-            " { border-top: 1px solid var(--line); }",
-            css,
-        )
-        self.assertNotIn("section { border-top", css)
+        self.assertIn("#document > .ui-disclosure", css)
+        self.assertIn("SovereignUI.addComposer", self.agreement)
+        for noun in ("section", "clause", "role"):
+            self.assertIn(f"noun: '{noun}'", self.agreement)
+        self.assertIn("noun: kind", self.agreement)
+        self.assertIn("kind: 'accountability'", self.agreement)
+        self.assertIn("kind: 'domain'", self.agreement)
         # How many actors are in it is not worth a line of its own: the
         # Identity line and every role already say it.
         self.assertNotIn("agreement-state", self.agreement)
         self.assertNotIn("One actor", self.agreement)
+
+    def test_document_add_controls_live_on_their_heading_rows(self):
+        css = files("s_agreement.assets").joinpath(
+            "agreement.css",
+        ).read_text(encoding="utf-8")
+        self.assertIn("addControl: currentInteractionAllowed", self.agreement)
+        self.assertIn("addControl: !proposed && currentInteractionAllowed", self.agreement)
+        self.assertIn("className: 'element-add-control'", self.agreement)
+        self.assertIn(".element-row:hover .element-add-control", css)
+        self.assertNotIn("block.append(SovereignUI.addComposer", self.agreement)
+
+    def test_role_offer_picker_shares_the_held_by_heading_and_theme(self):
+        css = files("s_agreement.assets").joinpath(
+            "agreement.css",
+        ).read_text(encoding="utf-8")
+        self.assertIn("heldHeading.append(picker)", self.agreement)
+        self.assertIn(".role-holders-heading", css)
+        self.assertIn("background-color: var(--panel)", css)
+        self.assertIn(".role-offer-picker option", css)
 
     def test_assets_never_navigate_to_the_bare_root_with_a_query(self):
         # "/" serves whichever application is primary, so a root-relative link
@@ -340,13 +377,13 @@ class ThemeTests(unittest.TestCase):
         self.assertNotIn("color: #111827", self.css)
         self.assertNotIn("color:#111827", self.css)
 
-    def test_your_own_participant_line_is_set_apart(self):
-        # The agreement-level acceptance strip is gone. What replaced it
-        # leads with your own line, which is the only one that acts, so
-        # it is the one that has to look different.
-        self.assertIn(".participant.is-self", self.css)
-        self.assertIn(".participant.is-self .role-chip", self.css)
-        self.assertIn("width: 22px", self.css)
+    def test_actor_lines_share_a_background_and_aligned_value_column(self):
+        participant = self.css.split(".participant {", 1)[1].split("}", 1)[0]
+        body = self.css.split(".acceptance-body {", 1)[1].split("}", 1)[0]
+        self.assertIn("display: grid", participant)
+        self.assertIn("background: var(--hover)", participant)
+        self.assertIn("display: grid", body)
+        self.assertIn("grid-template-columns: 150px minmax(0, 1fr)", body)
 
 
 if __name__ == "__main__":

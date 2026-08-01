@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.2.0a3 - 2026-08-01
+
+Renamed from S-Agreement to **S-Team**, distributed as `sovereign-team`. The
+application id is now `team`, routes are served under `/api/team/`, and the
+Python package is `s_team`. The `agreement_*` node types are unchanged: a team
+is constituted by an agreement, so that word names the document rather than
+the application, and nothing about the stored tree moves.
 
 Roles, actors, and the organization built out of them, following
 `DESIGN_ROLES_AND_ACTORS.md`. Taking part in an agreement is now holding a

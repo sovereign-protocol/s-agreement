@@ -1771,7 +1771,7 @@ class TeamLogic:
                     address, agreement_uuid,
                 )
                 if not (
-                    event["type"] == "in_transition"
+                    event["stage"] == "in_flight"
                     and liveness.get("state") == "stale"
                 )
             )
@@ -1940,8 +1940,8 @@ class TeamLogic:
             current = grouped.get(node_uuid)
             if (
                 current is None
-                or Session.TRANSITION_PRIORITY.get(event.get("type"), 0)
-                > Session.TRANSITION_PRIORITY.get(current.get("type"), 0)
+                or Session.transition_rank(event)
+                > Session.transition_rank(current)
             ):
                 grouped[node_uuid] = view
         payload["network"] = network
@@ -1951,7 +1951,7 @@ class TeamLogic:
 
     @staticmethod
     def _transition_visible(event: dict, network: dict) -> bool:
-        if event.get("type") != "in_transition":
+        if event.get("stage") != "in_flight":
             return True
         peer = ((network.get("peers") or {}).get(
             event.get("peer_addr"),
@@ -1996,15 +1996,14 @@ class TeamLogic:
         return None
 
     def transition_by_node(self, events: list[dict]) -> dict:
-        priority = Session.TRANSITION_PRIORITY
         grouped: dict[str, dict] = {}
         for event in events:
             node_uuid = event.get("node_uuid")
             if not node_uuid:
                 continue
             current = grouped.get(node_uuid)
-            if not current or priority.get(event.get("type"), 0) > priority.get(
-                    current.get("type"), 0):
+            if not current or (Session.transition_rank(event)
+                               > Session.transition_rank(current)):
                 # The reaction rides with the transition so the view never has
                 # to work out whether this side or the peer holds the stale
                 # revision.

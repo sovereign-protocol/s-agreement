@@ -154,14 +154,14 @@ h2.element-label { margin: 0 0 4px; }
   cursor: help;
 }
 .status-lamp[data-status="divergence"] { background: #dc2626; border-color: #dc2626; }
-.status-lamp[data-status="in_transition"] { background: #f59e0b; border-color: #f59e0b; }
+.status-lamp[data-status="in_flight"] { background: #f59e0b; border-color: #f59e0b; }
 .status-lamp[data-status="peer_made_changes"],
 .status-lamp[data-status="local_missing_node"] { background: #2563eb; border-color: #2563eb; }
 .status-lamp[data-status="local_made_changes"],
 .status-lamp[data-status="peer_missing_node"] { background: #9ca3af; border-color: #9ca3af; }
 
 .element-row[data-status="divergence"] { background: rgba(220, 38, 38, 0.15); }
-.element-row[data-status="in_transition"] { background: rgba(245, 158, 11, 0.15); }
+.element-row[data-status="in_flight"] { background: rgba(245, 158, 11, 0.15); }
 .element-row.is-proposed {
   border: 1px dashed rgba(37, 99, 235, 0.55);
   background: rgba(37, 99, 235, 0.12);

@@ -116,8 +116,10 @@
       row.className = 'element-row';
       row.classList.toggle('is-proposed', proposed);
       const transition = payloadState.transition_by_node?.[node.uuid];
-      const status = transition?.type && transition.type !== 'in_agreement'
-        ? transition.type : 'in_agreement';
+      const status = transition?.stage === 'in_flight'
+        ? 'in_flight'
+        : (transition?.type && transition.type !== 'in_agreement'
+          ? transition.type : 'in_agreement');
       row.dataset.status = status;
 
       const lamp = document.createElement('span');
@@ -166,12 +168,12 @@
 
       if (interactive
           && transition
-          && !['in_agreement', 'in_transition'].includes(transition.type)
+          && !['settled', 'in_flight'].includes(transition.stage)
           && transition.peer_addr) {
         const react = document.createElement('button');
         react.type = 'button';
         react.className = 'element-react';
-        const sourceType = transition.original_type || transition.type;
+        const sourceType = transition.type;
         const rollback = transition.reaction === 'rollback';
         const peerMissing = sourceType === 'peer_missing_node';
         const withdraw = rollback && peerMissing;

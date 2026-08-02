@@ -586,14 +586,22 @@ class TeamLogicTests(unittest.TestCase):
         from s_team import logic as agreement_logic
 
         source = Path(agreement_logic.__file__).read_text(encoding="utf-8")
-        self.assertIn("Session.TRANSITION_PRIORITY", source)
+        self.assertRegex(
+            source, r"Session\.(TRANSITION_PRIORITY|STAGE_PRIORITY|transition_rank)",
+        )
         self.assertNotIn('"divergence": 5', source)
         self.assertNotIn('"divergence": 6', source)
 
         priority = Session.TRANSITION_PRIORITY
         self.assertGreater(priority["divergence"], priority["peer_made_changes"])
-        self.assertGreater(priority["peer_made_changes"], priority["in_transition"])
+        self.assertGreater(
+            priority["peer_made_changes"], priority["local_made_changes"],
+        )
         self.assertEqual(priority["in_agreement"], 0)
+        self.assertGreater(
+            Session.STAGE_PRIORITY["awaiting_me"],
+            Session.STAGE_PRIORITY["in_flight"],
+        )
 
     def test_titles_and_text_stay_editable_after_creation(self):
         runtime = self.runtime(9403)
